@@ -13,7 +13,10 @@ import {
   truncateString,
 } from "@/lib/utils";
 import { Search, Filter, ChevronDown, ChevronUp } from "lucide-react";
-import { ChangeDetails } from "./change-details";
+import dynamic from "next/dynamic";
+const LazyChangeDetails = dynamic(() => import("./lazy-change-details"), {
+  loading: () => <p>Loading details…</p>,
+});
 import { useChanges } from "@/hooks/use-changes";
 
 interface ChangesListProps {
@@ -21,14 +24,19 @@ interface ChangesListProps {
 }
 
 export function ChangesList({ programId }: ChangesListProps) {
-  const { data, isLoading } = useChanges(100, programId);
-  const changes = useMemo(() => data?.changes ?? [], [data?.changes]);
-
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [programFilter, setProgramFilter] = useState<string>("all");
   const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
+
+  const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } =
+    useChanges(50, programId, {
+      search: debouncedSearchTerm,
+      severity: severityFilter,
+      programName: programFilter,
+    });
+  const changes = useMemo(() => data?.pages.flatMap((page) => page.changes) ?? [], [data?.pages]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -37,36 +45,7 @@ export function ChangesList({ programId }: ChangesListProps) {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  const filteredChanges = useMemo(() => {
-    let filtered = changes;
-
-    if (debouncedSearchTerm.trim()) {
-      filtered = filtered.filter(
-        (change) =>
-          (change.monitored_programs?.program_id &&
-            change.monitored_programs.program_id
-              .toLowerCase()
-              .includes(debouncedSearchTerm.toLowerCase())) ||
-          change.change_summary.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-          change.change_type.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-          change.program_id.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-          (change.monitored_programs?.name &&
-            change.monitored_programs.name
-              .toLowerCase()
-              .includes(debouncedSearchTerm.toLowerCase()))
-      );
-    }
-
-    if (severityFilter !== "all") {
-      filtered = filtered.filter((change) => change.severity === severityFilter);
-    }
-
-    if (programFilter !== "all") {
-      filtered = filtered.filter((change) => change.monitored_programs?.name === programFilter);
-    }
-
-    return filtered;
-  }, [debouncedSearchTerm, severityFilter, programFilter, changes]);
+  const filteredChanges = changes;
 
   const toggleExpanded = (changeId: string) => {
     const newExpanded = new Set(expandedChanges);
@@ -89,10 +68,18 @@ export function ChangesList({ programId }: ChangesListProps) {
   // Get unique program names
   const programOptions = [
     { value: "all", label: "All Programs" },
-    ...Array.from(new Set(changes.map((change) => change.monitored_programs?.name).filter(Boolean)))
+    ...Array.from(
+      new Set(
+        [programFilter, ...changes.map((change) => change.monitored_programs?.name)].filter(
+          (name) => name && name !== "all"
+        )
+      )
+    )
       .map((name) => ({ value: name as string, label: name as string }))
       .sort((a, b) => a.label.localeCompare(b.label)),
   ];
+
+  if (isError) return <p role="alert">Unable to load changes. Please try again.</p>;
 
   if (isLoading) {
     return (
@@ -243,6 +230,8 @@ export function ChangesList({ programId }: ChangesListProps) {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label={`${isExpanded ? "Collapse" : "Expand"} change details`}
+                            aria-expanded={isExpanded}
                             onClick={() => toggleExpanded(change.id)}
                             className="h-6 w-6 p-0"
                           >
@@ -261,10 +250,10 @@ export function ChangesList({ programId }: ChangesListProps) {
                         {truncateString(programAddress, 40)}
                       </p>
 
-                      {isExpanded && change.change_details && (
+                      {isExpanded && (
                         <div className="mt-4 overflow-auto rounded-md bg-muted/50 p-3 sm:p-4">
                           <h4 className="mb-3 text-sm font-medium">Change Details</h4>
-                          <ChangeDetails details={change.change_details} />
+                          <LazyChangeDetails id={change.id} />
                         </div>
                       )}
                     </div>
@@ -274,6 +263,15 @@ export function ChangesList({ programId }: ChangesListProps) {
             );
           })}
         </div>
+      )}
+      {hasNextPage && (
+        <Button
+          variant="outline"
+          disabled={isFetchingNextPage || isFetching}
+          onClick={() => void fetchNextPage()}
+        >
+          {isFetchingNextPage ? "Loading…" : "Load more changes"}
+        </Button>
       )}
     </div>
   );

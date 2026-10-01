@@ -9,7 +9,7 @@ import { ExternalLink, Plus, Code, Activity, AlertCircle } from "lucide-react";
 import { usePrograms } from "@/hooks/use-programs";
 
 export function MonitoredPrograms() {
-  const { data, isLoading } = usePrograms();
+  const { data, isLoading } = usePrograms({ limit: 5, publicOnly: true });
   const programs = data?.programs || [];
 
   if (isLoading) {

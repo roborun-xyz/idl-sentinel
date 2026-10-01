@@ -1,5 +1,8 @@
 "use client";
 
+import dynamic from "next/dynamic";
+import { useQueryClient } from "@tanstack/react-query";
+import { snapshotQuery } from "@/hooks/use-programs";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -28,9 +31,6 @@ import {
   Download,
   X,
 } from "lucide-react";
-import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
-import json from "react-syntax-highlighter/dist/esm/languages/hljs/json";
-import { github } from "react-syntax-highlighter/dist/esm/styles/hljs";
 import {
   useProgram,
   useProgramSnapshots,
@@ -40,14 +40,14 @@ import {
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { useAuth } from "@/lib/auth/auth-context";
 
-// Register JSON language
-SyntaxHighlighter.registerLanguage("json", json);
+const SnapshotJson = dynamic(() => import("./snapshot-json"), {
+  loading: () => <p>Loading viewer…</p>,
+});
 
 interface Snapshot {
   id: string;
   program_id: string;
   idl_hash: string;
-  idl_content: unknown;
   fetched_at: string;
 }
 
@@ -57,6 +57,8 @@ interface ProgramDetailProps {
 
 export function ProgramDetail({ programId }: ProgramDetailProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [viewingSnapshot, setViewingSnapshot] = useState<Snapshot | null>(null);
 
   const {
@@ -66,7 +68,7 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
     error: programErrorObj,
     refetch: refetchProgram,
   } = useProgram(programId);
-  const { data: snapshotsData, refetch: refetchSnapshots } = useProgramSnapshots(programId);
+  const { data: snapshotsData, refetch: refetchSnapshots } = useProgramSnapshots(programId, 5);
   const { data: changesData, refetch: refetchChanges } = useProgramChanges(programId);
   const { data: settingsData } = useUserSettings({ enabled: true });
   const { isAdmin, userId } = useAuth();
@@ -106,17 +108,23 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
     return `${hash.slice(0, 8)}...${hash.slice(-8)}`;
   };
 
-  const downloadSnapshot = (snapshot: Snapshot) => {
-    const dataStr = JSON.stringify(snapshot.idl_content, null, 2);
-    const dataBlob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${program?.name || "snapshot"}_${snapshot.idl_hash.substring(0, 8)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const downloadSnapshot = async (snapshot: Snapshot) => {
+    try {
+      setSnapshotError(null);
+      const data = await queryClient.fetchQuery(snapshotQuery(programId, snapshot.id));
+      const dataStr = JSON.stringify(data.snapshot.idl_content, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${program?.name || "snapshot"}_${snapshot.idl_hash.substring(0, 8)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      setSnapshotError("Unable to download snapshot. Please try again.");
+    }
   };
 
   if (programLoading) {
@@ -185,6 +193,7 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
 
   return (
     <div className="space-y-8">
+      {snapshotError && <p role="alert">{snapshotError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
@@ -448,19 +457,7 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
 
             {/* Modal Content */}
             <div className="flex-1 overflow-auto p-4">
-              <SyntaxHighlighter
-                language="json"
-                style={github}
-                customStyle={{
-                  margin: 0,
-                  borderRadius: "0.5rem",
-                  fontSize: "12px",
-                  lineHeight: "1.5",
-                }}
-                showLineNumbers={true}
-              >
-                {JSON.stringify(viewingSnapshot.idl_content, null, 2)}
-              </SyntaxHighlighter>
+              <SnapshotJson programId={programId} snapshotId={viewingSnapshot.id} />
             </div>
           </div>
         </div>

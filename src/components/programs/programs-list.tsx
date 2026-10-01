@@ -15,33 +15,30 @@ import { cn } from "@/lib/utils";
 
 export function ProgramsList() {
   const { isAdmin, userId } = useAuth();
-  const { data, isLoading } = usePrograms();
+
   const deleteMutation = useDeleteProgram();
-  const programs = useMemo(() => data?.programs || [], [data?.programs]);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
+  const [offset, setOffset] = useState(0);
+  const { data, isLoading, isError, isFetching } = usePrograms({
+    limit: 25,
+    offset,
+    search: debouncedSearchTerm,
+  });
+  const programs = useMemo(() => data?.programs || [], [data?.programs]);
+
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
+      setOffset(0);
     }, 300);
 
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  const filteredPrograms = useMemo(() => {
-    if (!debouncedSearchTerm.trim()) {
-      return programs;
-    }
-    return programs.filter(
-      (program) =>
-        program.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        program.program_id.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-        (program.description &&
-          program.description.toLowerCase().includes(debouncedSearchTerm.toLowerCase()))
-    );
-  }, [debouncedSearchTerm, programs]);
+  const filteredPrograms = programs;
 
   const handleDelete = async (programId: string) => {
     if (!confirm("Are you sure you want to delete this program? This action cannot be undone.")) {
@@ -54,6 +51,8 @@ export function ProgramsList() {
       alert(error instanceof Error ? error.message : "Failed to delete program");
     }
   };
+
+  if (isError) return <p role="alert">Unable to load programs. Please try again.</p>;
 
   if (isLoading) {
     return (
@@ -96,7 +95,7 @@ export function ProgramsList() {
             />
           </div>
           <div className="text-sm text-muted-foreground">
-            {filteredPrograms.length} of {programs.length} programs
+            {filteredPrograms.length} of {data?.pagination.total ?? 0} programs
           </div>
         </div>
 
@@ -111,7 +110,7 @@ export function ProgramsList() {
       {filteredPrograms.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
-            {programs.length === 0 ? (
+            {!debouncedSearchTerm && offset === 0 ? (
               <div>
                 <h3 className="mb-2 text-lg font-medium">No programs monitored yet</h3>
                 <p className="mb-6 text-muted-foreground">
@@ -141,9 +140,7 @@ export function ProgramsList() {
             return (
               <Card
                 key={program.id}
-                className={cn(
-                  !program.is_active && "border-dashed bg-muted/30 opacity-75"
-                )}
+                className={cn(!program.is_active && "border-dashed bg-muted/30 opacity-75")}
               >
                 <CardContent className="p-4 sm:p-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -233,6 +230,22 @@ export function ProgramsList() {
           })}
         </div>
       )}
+      <div className="flex justify-between">
+        <Button
+          variant="outline"
+          disabled={offset === 0 || isFetching}
+          onClick={() => setOffset(Math.max(0, offset - 25))}
+        >
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          disabled={!data?.pagination.hasMore || isFetching}
+          onClick={() => setOffset(offset + 25)}
+        >
+          Next
+        </Button>
+      </div>
     </div>
   );
 }

@@ -1,49 +1,53 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRecentChanges, getChangeStatistics } from "@/lib/db/changes";
-import type { ChangeSeverity } from "@/lib/db/changes";
+import { z } from "zod";
+import { getRecentChanges, getChangeStatistics, type ChangeSeverity } from "@/lib/db/changes";
 
+const cursorSchema = z.object({
+  time: z.string().datetime({ offset: true }),
+  id: z.string().uuid(),
+});
 export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const limit = Number(params.get("limit") || 50);
+  const severity = params.get("severity") || undefined;
+  const programId = params.get("programId")?.trim() || undefined;
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100 ||
+    (severity && !["low", "medium", "high", "critical"].includes(severity))
+  ) {
+    return NextResponse.json({ error: "Invalid limit or severity" }, { status: 400 });
+  }
+  let before: { time: string; id: string } | undefined;
+  if (params.has("cursor")) {
+    try {
+      before = cursorSchema.parse(
+        JSON.parse(Buffer.from(params.get("cursor")!, "base64url").toString())
+      );
+    } catch {
+      return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
+    }
+  }
   try {
-    const { searchParams } = new URL(request.url);
-    const limit = parseInt(searchParams.get("limit") || "50");
-    const severity = searchParams.get("severity");
-    const stats = searchParams.get("stats") === "true";
-    const programId = searchParams.get("programId")?.trim() || undefined;
-
-    // Validate limit
-    if (limit < 1 || limit > 100) {
-      return NextResponse.json({ error: "Limit must be between 1 and 100" }, { status: 400 });
-    }
-
-    // Return statistics if requested
-    if (stats) {
-      const statistics = await getChangeStatistics(programId);
-      return NextResponse.json({ statistics });
-    }
-
-    // Filter by severity if provided
-    if (severity) {
-      const validSeverities: ChangeSeverity[] = ["low", "medium", "high", "critical"];
-      if (!validSeverities.includes(severity as ChangeSeverity)) {
-        return NextResponse.json(
-          { error: "Invalid severity. Must be one of: low, medium, high, critical" },
-          { status: 400 }
-        );
-      }
-
-      const changes = await getRecentChanges(limit, {
-        severity: severity as ChangeSeverity,
-        programId,
-      });
-      return NextResponse.json({ changes });
-    }
-
-    // Get recent changes
-    const changes = await getRecentChanges(limit, { programId });
-
-    return NextResponse.json({ changes });
+    if (params.get("stats") === "true")
+      return NextResponse.json({ statistics: await getChangeStatistics(programId) });
+    const rows = await getRecentChanges(limit + 1, {
+      programId,
+      severity: severity as ChangeSeverity | undefined,
+      search: (params.get("search") || "").slice(0, 200),
+      programName: params.get("programName") || undefined,
+      before,
+    });
+    const changes = rows.slice(0, limit);
+    const last = changes[changes.length - 1];
+    const nextCursor =
+      rows.length > limit && last
+        ? Buffer.from(JSON.stringify({ time: last.detected_at, id: last.id })).toString("base64url")
+        : null;
+    return NextResponse.json({ changes, nextCursor });
   } catch (error) {
-    console.error("Error fetching changes:", error);
-    return NextResponse.json({ error: "Failed to fetch changes" }, { status: 500 });
+    console.error("Failed to load changes:", error);
+    return NextResponse.json({ error: "Failed to load changes" }, { status: 500 });
   }
 }

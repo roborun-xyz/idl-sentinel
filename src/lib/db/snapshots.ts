@@ -54,10 +54,10 @@ export async function recordIdlTransition(
 export async function getProgramSnapshots(
   programId: string,
   limit = 10
-): Promise<IdlSnapshot[]> {
+): Promise<SnapshotSummary[]> {
   const { data, error } = await supabaseAdmin
     .from("idl_snapshots")
-    .select("*")
+    .select("id, program_id, idl_hash, version_number, fetched_at")
     .eq("program_id", programId)
     .order("version_number", { ascending: false })
     .order("fetched_at", { ascending: false })
