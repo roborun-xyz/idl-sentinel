@@ -1,9 +1,24 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useRef, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  type ReactNode,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useWallet } from "@solana/wallet-adapter-react";
 import bs58 from "bs58";
+import { createSignInMessage } from "./message";
 
+interface Session {
+  walletAddress: string;
+  userId: string;
+  isAdmin: boolean;
+}
 interface AuthContextType {
   isAuthenticated: boolean;
   walletAddress: string | null;
@@ -13,176 +28,132 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   isLoading: boolean;
 }
-
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { publicKey, signMessage, disconnect, connected } = useWallet();
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const queryClient = useQueryClient();
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const wasConnectedRef = useRef(false);
+  const generation = useRef("");
+  const [checkedWallet, setCheckedWallet] = useState<string | null | undefined>(undefined);
+  const wallet = publicKey?.toBase58() || null;
+  const previousWallet = useRef<string | null>(null);
 
-  // Check authentication status on mount
-  useEffect(() => {
-    checkAuthStatus();
-  }, []);
+  const clearPrivateCache = useCallback(() => {
+    // Cancel first so an in-flight response cannot repopulate a signed-out cache.
+    const filters = {
+      predicate: (q: { queryKey: readonly unknown[] }) =>
+        ["user", "watchlist", "programs"].includes(String(q.queryKey[0])),
+    };
+    void queryClient.cancelQueries(filters);
+    queryClient.removeQueries(filters);
+  }, [queryClient]);
 
-  // Check for wallet mismatch when publicKey changes
-  useEffect(() => {
-    if (publicKey && connected) {
-      // Wallet is connected - check for mismatch and track connection state
-      wasConnectedRef.current = true;
-      checkAuthStatus();
-    } else if (!connected && wasConnectedRef.current) {
-      // Wallet was connected and is now disconnected - clear auth state
-      // This handles explicit disconnection by the user
-      setWalletAddress(null);
-      setUserId(null);
-      setIsAuthenticated(false);
-      setIsAdmin(false);
-      wasConnectedRef.current = false;
-    }
-    // If publicKey is null and wasConnectedRef.current is false, we're still autoconnecting
-    // In this case, don't clear auth state - let JWT maintain the session
-  }, [publicKey, connected]);
-
-  const checkAuthStatus = async () => {
-    try {
-      const response = await fetch("/api/auth/me");
-      if (response.ok) {
-        const data = await response.json();
-
-        // Check for wallet mismatch
-        if (publicKey && data.walletAddress !== publicKey.toBase58()) {
-          console.warn("Wallet mismatch detected!");
-          console.log("JWT wallet:", data.walletAddress);
-          console.log("Connected wallet:", publicKey.toBase58());
-          console.log("Auto-signing out...");
-
-          // Clear auth state
-          await fetch("/api/auth/signout", { method: "POST" });
-          setIsAuthenticated(false);
-          setWalletAddress(null);
-          setUserId(null);
-          setIsAdmin(false);
-          return;
-        }
-
-        setIsAuthenticated(true);
-        setWalletAddress(data.walletAddress);
-        setUserId(data.userId || null);
-        setIsAdmin(data.isAdmin || false);
+  const readSession = useCallback(
+    async (expectedWallet: string | null, requestGeneration: string) => {
+      const response = await fetch("/api/auth/me", { cache: "no-store" });
+      const next: Session | null = response.ok ? await response.json() : null;
+      if (generation.current !== requestGeneration) return;
+      if (next && expectedWallet && next.walletAddress !== expectedWallet) {
+        await fetch("/api/auth/signout", { method: "POST" });
+        if (generation.current !== requestGeneration) return;
+        clearPrivateCache();
+        setSession(null);
       } else {
-        setIsAuthenticated(false);
-        setWalletAddress(null);
-        setUserId(null);
-        setIsAdmin(false);
+        setSession(next);
       }
-    } catch (error) {
-      console.error("Error checking auth status:", error);
-      setIsAuthenticated(false);
-      setUserId(null);
-      setIsAdmin(false);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    },
+    [clearPrivateCache]
+  );
 
-  const signIn = async () => {
-    if (!publicKey || !signMessage) {
-      throw new Error("Wallet not connected");
-    }
+  useEffect(() => {
+    const requestGeneration = crypto.randomUUID();
+    generation.current = requestGeneration;
+    const changed = previousWallet.current !== null && previousWallet.current !== wallet;
+    previousWallet.current = wallet;
+    if (changed) clearPrivateCache();
+    void (async () => {
+      try {
+        if (changed && !connected) await fetch("/api/auth/signout", { method: "POST" });
+        await readSession(wallet, requestGeneration);
+      } catch {
+        if (generation.current === requestGeneration) setSession(null);
+      } finally {
+        if (generation.current === requestGeneration) {
+          setIsLoading(false);
+          setCheckedWallet(wallet);
+        }
+      }
+    })();
+    return () => {
+      generation.current = crypto.randomUUID();
+    };
+  }, [wallet, connected, readSession, clearPrivateCache]);
 
+  const signIn = useCallback(async () => {
+    if (!publicKey || !signMessage) throw new Error("Wallet not connected");
+    const currentWallet = publicKey.toBase58();
+    const requestGeneration = crypto.randomUUID();
+    generation.current = requestGeneration;
+    setIsLoading(true);
     try {
-      setIsLoading(true);
-
-      // Get nonce from server
-      const nonceResponse = await fetch("/api/auth/nonce", {
+      const response = await fetch("/api/auth/nonce", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+        body: JSON.stringify({ walletAddress: currentWallet }),
       });
-
-      if (!nonceResponse.ok) {
-        throw new Error("Failed to get nonce");
-      }
-
-      const { nonce } = await nonceResponse.json();
-
-      // Create message to sign
-      const message = `Sign this message to authenticate with IDL Sentinel.\n\nNonce: ${nonce}`;
-      const messageBytes = new TextEncoder().encode(message);
-
-      // Sign the message
-      const signature = await signMessage(messageBytes);
-
-      // Verify signature on server
-      const verifyResponse = await fetch("/api/auth/verify", {
+      if (!response.ok) throw new Error("Failed to get nonce");
+      const { nonce } = await response.json();
+      const message = createSignInMessage(nonce);
+      const signature = await signMessage(new TextEncoder().encode(message));
+      if (requestGeneration !== generation.current) return;
+      const verified = await fetch("/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          walletAddress: publicKey.toBase58(),
-          signature: bs58.encode(signature),
+          walletAddress: currentWallet,
           message,
+          signature: bs58.encode(signature),
         }),
       });
-
-      if (!verifyResponse.ok) {
-        throw new Error("Failed to verify signature");
-      }
-
-      await verifyResponse.json();
-
-      setIsAuthenticated(true);
-      setWalletAddress(publicKey.toBase58());
-
-      // Fetch user details to get admin status
-      await checkAuthStatus();
-    } catch (error) {
-      console.error("Error signing in:", error);
-      throw error;
+      if (!verified.ok) throw new Error("Failed to verify signature");
+      clearPrivateCache();
+      await readSession(currentWallet, requestGeneration);
     } finally {
-      setIsLoading(false);
+      if (generation.current === requestGeneration) setIsLoading(false);
     }
-  };
+  }, [publicKey, signMessage, clearPrivateCache, readSession]);
 
-  const signOut = async () => {
-    try {
-      await fetch("/api/auth/signout", { method: "POST" });
-      setIsAuthenticated(false);
-      setWalletAddress(null);
-      setUserId(null);
-      setIsAdmin(false);
-      await disconnect();
-    } catch (error) {
-      console.error("Error signing out:", error);
-    }
-  };
+  const signOut = useCallback(async () => {
+    generation.current = crypto.randomUUID();
+    setSession(null);
+    clearPrivateCache();
+    const response = await fetch("/api/auth/signout", { method: "POST" });
+    if (!response.ok) throw new Error("Failed to sign out");
+    await disconnect();
+  }, [clearPrivateCache, disconnect]);
 
+  // Never expose the previous account while a connected wallet is changing.
+  const visibleSession = wallet && session?.walletAddress !== wallet ? null : session;
   return (
     <AuthContext.Provider
       value={{
-        isAuthenticated,
-        walletAddress,
-        userId,
-        isAdmin,
+        isAuthenticated: !!visibleSession,
+        walletAddress: visibleSession?.walletAddress || null,
+        userId: visibleSession?.userId || null,
+        isAdmin: visibleSession?.isAdmin || false,
+        isLoading: isLoading || checkedWallet !== wallet,
         signIn,
         signOut,
-        isLoading,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
 }
-
 export function useAuth() {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
+  const value = useContext(AuthContext);
+  if (!value) throw new Error("useAuth must be used within an AuthProvider");
+  return value;
 }

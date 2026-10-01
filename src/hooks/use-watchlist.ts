@@ -1,100 +1,100 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { queryKeys } from './query-keys'
+import { useAuth } from "@/lib/auth/auth-context";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "./query-keys";
 
 interface WatchlistItem {
-  id: string
-  program_id: string
-  created_at: string
+  id: string;
+  program_id: string;
+  created_at: string;
   monitored_programs: {
-    id: string
-    program_id: string
-    name: string
-    description: string | null
-    is_active: boolean
-  }
+    id: string;
+    program_id: string;
+    name: string;
+    description: string | null;
+    is_active: boolean;
+  };
 }
 
 interface WatchlistResponse {
-  watchlist: WatchlistItem[]
+  watchlist: WatchlistItem[];
 }
 
 export function useWatchlist(options?: { enabled?: boolean }) {
+  const { userId } = useAuth();
   return useQuery<WatchlistResponse>({
-    queryKey: queryKeys.watchlist,
-    queryFn: async () => {
-      const response = await fetch('/api/watchlist')
+    queryKey: queryKeys.watchlistFor(userId),
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/api/watchlist", { signal });
       if (!response.ok) {
-        if (response.status === 401) throw new Error('Authentication required')
-        throw new Error('Failed to fetch watchlist')
+        if (response.status === 401) throw new Error("Authentication required");
+        throw new Error("Failed to fetch watchlist");
       }
-      return response.json()
+      return response.json();
     },
-    staleTime: Infinity,
-    ...options,
-  })
+    staleTime: 60_000,
+    enabled: !!userId && (options?.enabled ?? true),
+    retry: false,
+  });
 }
 
 export function useAddToWatchlist() {
-  const queryClient = useQueryClient()
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (programDbId: string) => {
-      const response = await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ programId: programDbId }),
-      })
+      });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to add to watchlist')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to add to watchlist");
       }
-      return response.json()
+      return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist })
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
     },
-  })
+  });
 }
 
 export function useRemoveFromWatchlist() {
-  const queryClient = useQueryClient()
+  const { userId } = useAuth();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (programDbId: string) => {
       const response = await fetch(`/api/watchlist?programId=${programDbId}`, {
-        method: 'DELETE',
-      })
+        method: "DELETE",
+      });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to remove from watchlist')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to remove from watchlist");
       }
-      return programDbId
+      return programDbId;
     },
     onMutate: async (programDbId) => {
-      await queryClient.cancelQueries({ queryKey: queryKeys.watchlist })
-      const previous = queryClient.getQueryData<WatchlistResponse>(
-        queryKeys.watchlist
-      )
+      await queryClient.cancelQueries({ queryKey: queryKeys.watchlist });
+      const previous = queryClient.getQueryData<WatchlistResponse>(queryKeys.watchlistFor(userId));
 
-      queryClient.setQueryData<WatchlistResponse>(queryKeys.watchlist, (old) =>
+      queryClient.setQueryData<WatchlistResponse>(queryKeys.watchlistFor(userId), (old) =>
         old
           ? {
-              watchlist: old.watchlist.filter(
-                (item) => item.program_id !== programDbId
-              ),
+              watchlist: old.watchlist.filter((item) => item.program_id !== programDbId),
             }
           : undefined
-      )
+      );
 
-      return { previous }
+      return { previous };
     },
     onError: (_err, _programDbId, context) => {
       if (context?.previous) {
-        queryClient.setQueryData(queryKeys.watchlist, context.previous)
+        queryClient.setQueryData(queryKeys.watchlistFor(userId), context.previous);
       }
     },
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist })
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
     },
-  })
+  });
 }

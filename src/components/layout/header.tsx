@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Monitor, Settings, Blocks, Bell, Loader2, Menu, X } from "lucide-react";
+import { Settings, Blocks, Bell, Loader2, Menu, X } from "lucide-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useAuth } from "@/lib/auth/auth-context";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -100,89 +100,45 @@ export function Header() {
   );
 }
 
+const subscribeHydration = () => () => {};
+
 function WalletButton() {
   const { publicKey, connected, disconnect } = useWallet();
-  const { isAuthenticated, signIn, signOut, isLoading } = useAuth();
-  const [mounted, setMounted] = useState(false);
-  const [hasAttemptedAutoSignIn, setHasAttemptedAutoSignIn] = useState(false);
-  const previousWalletRef = useRef<string | null>(null);
+  const { isAuthenticated, signIn, isLoading } = useAuth();
+  const mounted = useSyncExternalStore(
+    subscribeHydration,
+    () => true,
+    () => false
+  );
+  const attemptedWallet = useRef<string | null>(null);
+  const walletAddress = publicKey?.toBase58() || null;
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Handle wallet disconnection - sign out from app
-  useEffect(() => {
-    if (!connected && isAuthenticated) {
-      signOut();
-    }
     if (!connected) {
-      setHasAttemptedAutoSignIn(false);
-      previousWalletRef.current = null;
+      attemptedWallet.current = null;
+      return;
     }
-  }, [connected, isAuthenticated, signOut]);
+    if (
+      !mounted ||
+      !walletAddress ||
+      isAuthenticated ||
+      isLoading ||
+      attemptedWallet.current === walletAddress
+    )
+      return;
+    attemptedWallet.current = walletAddress;
+    void signIn().catch(() => disconnect());
+  }, [connected, mounted, walletAddress, isAuthenticated, isLoading, signIn, disconnect]);
 
-  // Handle wallet switch - re-authenticate with new wallet
-  useEffect(() => {
-    if (mounted && connected && publicKey && isAuthenticated) {
-      const connectedAddress = publicKey.toBase58();
-
-      // If we have a previous wallet and it's different, user switched wallets
-      if (previousWalletRef.current && previousWalletRef.current !== connectedAddress) {
-        console.log("Wallet switched, re-authenticating...");
-        signOut().then(() => {
-          setHasAttemptedAutoSignIn(false);
-          previousWalletRef.current = null;
-        });
-      } else if (!previousWalletRef.current) {
-        // First time authenticating, track this wallet
-        previousWalletRef.current = connectedAddress;
-      }
-    }
-  }, [mounted, connected, publicKey, isAuthenticated, signOut]);
-
-  // Auto sign-in when wallet connects (only once per connection)
-  useEffect(() => {
-    if (mounted && connected && !isAuthenticated && !isLoading && !hasAttemptedAutoSignIn) {
-      setHasAttemptedAutoSignIn(true);
-      signIn().catch((error) => {
-        // If user cancels, disconnect wallet so they can try again
-        console.log("Sign-in cancelled or failed:", error.message || error);
-        disconnect();
-      });
-    }
-  }, [mounted, connected, isAuthenticated, isLoading, hasAttemptedAutoSignIn, signIn, disconnect]);
-
-  // Prevent hydration mismatch by not rendering wallet button on server
-  if (!mounted) {
-    return <div className="h-10 w-[140px] animate-pulse rounded-md bg-muted/50" />;
-  }
-
-  if (!connected) {
-    return (
-      <div className="wallet-button-small">
-        <WalletMultiButton />
-      </div>
-    );
-  }
-
+  if (!mounted) return <div className="h-10 w-[140px] animate-pulse rounded-md bg-muted/50" />;
   if (connected && !isAuthenticated && isLoading) {
     return (
-      <Button disabled={true} size="sm">
+      <Button disabled size="sm">
         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        Signing in...
+        Signing in…
       </Button>
     );
   }
-
-  if (isAuthenticated) {
-    return (
-      <div className="wallet-button-small">
-        <WalletMultiButton />
-      </div>
-    );
-  }
-
   return (
     <div className="wallet-button-small">
       <WalletMultiButton />

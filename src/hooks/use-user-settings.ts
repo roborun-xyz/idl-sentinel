@@ -1,162 +1,166 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useCallback } from 'react'
-import { queryKeys } from './query-keys'
+import { useAuth } from "@/lib/auth/auth-context";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useCallback } from "react";
+import { queryKeys } from "./query-keys";
 
 interface UserSettings {
-  wallet_address: string
-  slack_webhook_url: string | null
-  telegram_chat_id: string | null
-  telegram_username: string | null
-  preferred_explorer: 'explorer.solana.com' | 'solscan.io'
-  is_admin: boolean
-  created_at: string
-  last_login_at: string
+  wallet_address: string;
+  slack_webhook_url: string | null;
+  telegram_chat_id: string | null;
+  telegram_username: string | null;
+  preferred_explorer: "explorer.solana.com" | "solscan.io";
+  is_admin: boolean;
+  created_at: string;
+  last_login_at: string;
 }
 
 interface UserSettingsResponse {
-  user: UserSettings
+  user: UserSettings;
 }
 
 export function useUserSettings(options?: { enabled?: boolean }) {
+  const { userId } = useAuth();
   return useQuery<UserSettingsResponse>({
-    queryKey: queryKeys.userSettings(),
-    queryFn: async () => {
-      const response = await fetch('/api/user/settings')
+    queryKey: queryKeys.userSettings(userId),
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/api/user/settings", { signal });
       if (!response.ok) {
-        if (response.status === 401) throw new Error('Authentication required')
-        throw new Error('Failed to fetch settings')
+        if (response.status === 401) throw new Error("Authentication required");
+        throw new Error("Failed to fetch settings");
       }
-      return response.json()
+      return response.json();
     },
     staleTime: 60 * 1000,
-    ...options,
-  })
+    enabled: !!userId && (options?.enabled ?? true),
+    retry: false,
+  });
 }
 
 export function useUpdateSettings() {
-  const queryClient = useQueryClient()
+  const { userId } = useAuth();
+  const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: async (
       updates: Partial<
-        Pick<
-          UserSettings,
-          'slack_webhook_url' | 'telegram_chat_id' | 'preferred_explorer'
-        >
+        Pick<UserSettings, "slack_webhook_url" | "telegram_chat_id" | "preferred_explorer">
       >
     ) => {
-      const response = await fetch('/api/user/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/user/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
-      })
+      });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to update settings')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to update settings");
       }
-      return response.json() as Promise<UserSettingsResponse>
+      return response.json() as Promise<UserSettingsResponse>;
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(queryKeys.userSettings(), data)
+      queryClient.setQueryData(queryKeys.userSettings(userId), data);
     },
-  })
+  });
 }
 
 export function useTestSlackWebhook() {
   return useMutation({
     mutationFn: async (webhookUrl: string) => {
-      const response = await fetch('/api/user/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ test_type: 'slack', slack_webhook_url: webhookUrl }),
-      })
+      const response = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_type: "slack", slack_webhook_url: webhookUrl }),
+      });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to send test notification')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to send test notification");
       }
-      return response.json()
+      return response.json();
     },
-  })
+  });
 }
 
 export function useTestTelegram() {
   return useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/user/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ test_type: 'telegram' }),
-      })
+      const response = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_type: "telegram" }),
+      });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to send test notification')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to send test notification");
       }
-      return response.json()
+      return response.json();
     },
-  })
+  });
 }
 
 export function useTelegramConnect() {
   return useMutation({
     mutationFn: async () => {
-      const response = await fetch('/api/telegram/connect', { method: 'POST' })
+      const response = await fetch("/api/telegram/connect", { method: "POST" });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}))
-        throw new Error(error.error || 'Failed to generate connection link')
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to generate connection link");
       }
-      return response.json() as Promise<{ url: string }>
+      return response.json() as Promise<{ url: string }>;
     },
-  })
+  });
 }
 
-export function useTelegramConnectionPoll(
-  isWaiting: boolean,
-  onConnected: () => void
-) {
-  const queryClient = useQueryClient()
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const onConnectedRef = useRef(onConnected)
+export function useTelegramConnectionPoll(isWaiting: boolean, onConnected: () => void) {
+  const { userId } = useAuth();
+  const queryClient = useQueryClient();
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const onConnectedRef = useRef(onConnected);
 
-  onConnectedRef.current = onConnected
+  useEffect(() => {
+    onConnectedRef.current = onConnected;
+  }, [onConnected]);
 
   const cleanup = useCallback(() => {
     if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
     }
     if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current)
-      pollTimeoutRef.current = null
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
     if (!isWaiting) {
-      cleanup()
-      return
+      cleanup();
+      return;
     }
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const response = await fetch('/api/user/settings')
+        const response = await fetch("/api/user/settings");
         if (response.ok) {
-          const data: UserSettingsResponse = await response.json()
+          const data: UserSettingsResponse = await response.json();
           if (data.user?.telegram_chat_id) {
-            queryClient.setQueryData(queryKeys.userSettings(), data)
-            onConnectedRef.current()
-            cleanup()
+            queryClient.setQueryData(queryKeys.userSettings(userId), data);
+            onConnectedRef.current();
+            cleanup();
           }
         }
       } catch (err) {
-        console.error('Error polling for connection status:', err)
+        console.error("Error polling for connection status:", err);
       }
-    }, 3000)
+    }, 3000);
 
-    pollTimeoutRef.current = setTimeout(() => {
-      cleanup()
-    }, 10 * 60 * 1000)
+    pollTimeoutRef.current = setTimeout(
+      () => {
+        cleanup();
+      },
+      10 * 60 * 1000
+    );
 
-    return cleanup
-  }, [isWaiting, queryClient, cleanup])
+    return cleanup;
+  }, [isWaiting, queryClient, cleanup, userId]);
 }

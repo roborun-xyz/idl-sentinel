@@ -13,10 +13,11 @@ export const queryKeys = {
 
   // Watchlist
   watchlist: ["watchlist"] as const,
+  watchlistFor: (userId: string | null) => ["watchlist", userId] as const,
 
   // User
   user: ["user"] as const,
-  userSettings: () => [...queryKeys.user, "settings"] as const,
+  userSettings: (userId: string | null) => [...queryKeys.user, userId, "settings"] as const,
 
   // Stats
   stats: ["stats"] as const,
