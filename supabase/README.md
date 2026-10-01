@@ -1,3 +1,8 @@
+---
+created_at: 2025-11-08
+updated_at: 2026-10-01
+---
+
 # Supabase Database Setup
 
 This directory contains the database schema for IDL Sentinel.
@@ -25,6 +30,7 @@ This directory contains the database schema for IDL Sentinel.
 ### Option 2: Using Supabase CLI
 
 1. **Link to your project**:
+
    ```bash
    npx supabase link --project-ref your-project-ref
    ```
@@ -87,21 +93,24 @@ Simply run `schema.sql` in your Supabase SQL Editor - this creates the entire da
 
 ### For Existing Deployments (Upgrading)
 
-**If you already have a running database and want to apply the latest optimizations:**
+Pause both schedulers, run all of [upgrade_reliability.sql](upgrade_reliability.sql)
+in the Supabase SQL Editor, deploy the matching application release, then resume
+the schedules. This transactional, repeatable upgrade is also included verbatim
+in `schema.sql`. It preserves existing rows, permits rollback versions, and adds
+atomic transition/nonce operations and bounded list/aggregate RPCs.
 
-Run the migration file `migration_production_optimizations.sql` which adds:
-- Performance indexes
-- Optimized database functions
+All application tables and RPCs are restricted to `service_role`. Wallet JWTs
+are verified by Next.js and do not establish Supabase Auth sessions. Public data
+is served by Next.js read APIs. Do not restore the old permissive policies.
 
-```sql
--- In Supabase SQL Editor, copy and paste the entire contents of:
--- supabase/migration_production_optimizations.sql
-```
+Run `pnpm test` to validate the schema, repeated upgrades, role restrictions,
+transaction recovery, nonce consumption, and query pagination locally.
 
 ### Files in This Directory
 
 - **`schema.sql`** - Complete database schema (use for fresh setup)
-- **`migration_production_optimizations.sql`** - Migration for existing databases (adds indexes and functions)
+- **`upgrade_reliability.sql`** - Current upgrade for existing databases
+- **`migration_production_optimizations.sql`** - Historical optimization script; do not reapply after the current upgrade
 - **`README.md`** - This file
 
 ### For Schema Updates
@@ -110,6 +119,7 @@ When making changes to the database:
 
 1. Update `schema.sql` to reflect the new desired state
 2. Use Supabase CLI to sync changes:
+
    ```bash
    # Link to your project (first time only)
    npx supabase link --project-ref your-project-ref
@@ -129,34 +139,23 @@ The `migrations/` directory is **not used** in this project. All schema changes 
 
 ### Row Level Security (RLS)
 
-All tables have RLS enabled with the following policies:
-
-- **Read access**: Most tables allow public read access
-- **Write access**: Varies by table
-  - Users can only modify their own data
-  - Only admins can manage monitored programs
-  - System operations use service role
+All application tables enable RLS and grant access only to the server's
+`service_role`. The anonymous and authenticated Data API roles have no direct
+access. Next.js endpoints expose public reads and enforce wallet ownership/admin
+permissions for writes.
 
 ### Environment Configuration
 
-The app uses `app.current_wallet` setting to track the authenticated user's wallet address. This is set by the API routes during authenticated requests.
+Set `SUPABASE_SERVICE_ROLE_KEY` only on the server. Wallet authentication uses
+signed JWT cookies and database-backed, single-use nonces; it does not rely on
+`app.current_wallet` or a browser Supabase Auth session.
 
 ## Troubleshooting
-
-### Issue: Policies not working
-
-Make sure you're setting the `app.current_wallet` configuration in your API routes:
-
-```typescript
-await supabase.rpc('set_config', {
-  name: 'app.current_wallet',
-  value: walletAddress
-})
-```
 
 ### Issue: Permission denied
 
 Check that:
+
 1. RLS is enabled on the table
 2. Appropriate policies exist
 3. You're using the correct Supabase client (with service role key for admin operations)
@@ -176,5 +175,6 @@ Supabase automatically backs up your database daily. You can also:
 ## Support
 
 For issues specific to:
+
 - **Supabase**: Check [Supabase docs](https://supabase.com/docs)
 - **IDL Sentinel**: Create an issue on GitHub

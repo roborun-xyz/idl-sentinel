@@ -1,3 +1,8 @@
+---
+created_at: 2025-11-02
+updated_at: 2026-10-01
+---
+
 # IDL Sentinel
 
 IDL Sentinel is a self-hostable Next.js app for watching Solana program IDLs.
@@ -66,17 +71,16 @@ Fill in `.env.local`.
 
 Minimum required for the app to boot and authenticate:
 
-| Variable                        | Purpose                                                      |
-| ------------------------------- | ------------------------------------------------------------ |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                                         |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key used by browser/API RLS flows              |
-| `SUPABASE_SERVICE_ROLE_KEY`     | Server-side key for cron, monitoring, and system writes      |
-| `SOLANA_RPC_URL`                | Server-side RPC used by IDL fetches and payment verification |
-| `NEXT_PUBLIC_SOLANA_RPC_URL`    | Browser RPC used by wallet/payment flows                     |
-| `NEXT_PUBLIC_SOLANA_NETWORK`    | `mainnet-beta`, `devnet`, or `testnet`                       |
-| `JWT_SECRET`                    | Secret for signed wallet sessions                            |
-| `CRON_SECRET`                   | Bearer token required by the monitoring endpoint             |
-| `NEXT_PUBLIC_APP_URL`           | Public app URL, for example `http://localhost:3000` locally  |
+| Variable                     | Purpose                                                      |
+| ---------------------------- | ------------------------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`   | Supabase project URL                                         |
+| `SUPABASE_SERVICE_ROLE_KEY`  | Server-side key for cron, monitoring, and system writes      |
+| `SOLANA_RPC_URL`             | Server-side RPC used by IDL fetches and payment verification |
+| `NEXT_PUBLIC_SOLANA_RPC_URL` | Browser RPC used by wallet/payment flows                     |
+| `NEXT_PUBLIC_SOLANA_NETWORK` | `mainnet-beta`, `devnet`, or `testnet`                       |
+| `JWT_SECRET`                 | At least 32 characters; required for signed wallet sessions  |
+| `CRON_SECRET`                | Bearer token required by the monitoring endpoint             |
+| `NEXT_PUBLIC_APP_URL`        | Public app URL, for example `http://localhost:3000` locally  |
 
 Generate secrets with:
 
@@ -158,6 +162,22 @@ As a regular user:
 New programs are added to the shared registry. Once a program is in the registry,
 any user can watch it for free.
 
+## Upgrading an Existing Installation
+
+Pause the monitoring and notification schedulers, then execute the entire
+[supabase/upgrade_reliability.sql](supabase/upgrade_reliability.sql) in the Supabase
+SQL Editor. The script is transactional and safe to reapply. Deploy this release,
+then resume both schedules. Do not run the old monitoring code after this upgrade.
+
+The upgrade records recurring IDL content as separate chronological versions,
+commits snapshots and changes atomically, adds database-backed login challenges,
+and revokes direct Data API access for anonymous/authenticated roles. Browser
+clients use the Next.js APIs; the service-role key remains server-side.
+
+`pnpm test` runs local PostgreSQL (PGlite) and application regression tests.
+It does not contact Supabase, Solana, Slack, or Telegram. Existing missed alerts
+are not reconstructed by the upgrade.
+
 ## Monitoring Cron
 
 The monitor endpoint is:
@@ -177,6 +197,15 @@ curl http://localhost:3000/api/cron/monitor-idls \
 The repo includes [vercel.json](vercel.json), which schedules the endpoint every
 15 minutes on Vercel. If you deploy somewhere else, configure a scheduler that
 calls the same endpoint with the Authorization header.
+
+`/api/cron/notifications` also runs every five minutes to drain pending deliveries
+independently of monitoring. Use the same `CRON_SECRET` header. Per-channel locks,
+per-user delivery receipts, and exponential retry delays preserve progress across
+runs; successful recipients are skipped on retries. A crash after sending but
+before saving a receipt can still cause a duplicate delivery.
+
+Monitoring visits programs in oldest-poll order and stops starting new work after
+two minutes. Remaining programs are picked up on the next scheduled run.
 
 Each run:
 
@@ -254,6 +283,7 @@ pnpm build
 pnpm start
 pnpm lint
 pnpm type-check
+pnpm test
 pnpm format:check
 ```
 
