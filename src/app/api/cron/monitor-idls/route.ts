@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { monitorPrograms } from "@/lib/monitoring/monitor";
-import { sendWatchlistNotifications } from "@/lib/notifications/slack";
-import { sendTelegramWatchlistNotifications } from "@/lib/notifications/telegram-user";
+import { runNotificationJobs } from "@/lib/cron/notifications";
 import { cleanupExpiredTokens } from "@/lib/telegram/connection-tokens";
 import { acquireCronLock, releaseCronLock } from "@/lib/cron/lock";
 import { generateUUID } from "@/lib/utils";
+
+export const maxDuration = 300;
 
 const MONITOR_CRON_LOCK = "monitor-idls";
 
@@ -26,7 +27,12 @@ export async function GET(request: NextRequest) {
   }
 
   const lockRunId = generateUUID();
-  const lockAcquired = await acquireCronLock(MONITOR_CRON_LOCK, lockRunId);
+  let lockAcquired = false;
+  try {
+    lockAcquired = await acquireCronLock(MONITOR_CRON_LOCK, lockRunId, 360_000);
+  } catch {
+    return NextResponse.json({ error: "Unable to acquire monitoring lock" }, { status: 500 });
+  }
 
   if (!lockAcquired) {
     return NextResponse.json(
@@ -43,11 +49,7 @@ export async function GET(request: NextRequest) {
     // Run the monitoring process
     const result = await monitorPrograms();
 
-    // Send Slack notifications to users based on their watchlists
-    const slackResult = await sendWatchlistNotifications();
-
-    // Send Telegram notifications to users based on their watchlists
-    const telegramUserResult = await sendTelegramWatchlistNotifications();
+    const { slack: slackResult, telegram_user: telegramUserResult } = await runNotificationJobs();
 
     // Clean up expired Telegram connection tokens
     await cleanupExpiredTokens();
@@ -78,6 +80,9 @@ export async function GET(request: NextRequest) {
       },
       { status: success ? 200 : 500 }
     );
+  } catch (error) {
+    console.error("Monitoring scheduler failed:", error);
+    return NextResponse.json({ error: "Monitoring scheduler failed" }, { status: 500 });
   } finally {
     await releaseCronLock(MONITOR_CRON_LOCK, lockRunId);
   }
