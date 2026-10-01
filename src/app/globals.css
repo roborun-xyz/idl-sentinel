@@ -68,6 +68,12 @@
   }
 }
 
+@layer components {
+  .page-container {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+}
+
 /* Wallet button customization */
 .wallet-button-small .wallet-adapter-button {
   height: 2.25rem !important; /* h-9 = 36px */

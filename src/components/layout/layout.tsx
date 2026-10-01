@@ -1,22 +1,18 @@
-'use client'
+"use client";
 
-import { Header } from './header'
-import { Footer } from './footer'
+import { Header } from "./header";
+import { Footer } from "./footer";
 
 interface LayoutProps {
-  children: React.ReactNode
+  children: React.ReactNode;
 }
 
 export function Layout({ children }: LayoutProps) {
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="flex min-h-screen flex-col bg-background">
       <Header />
-      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 lg:py-12 flex-1">
-        <div className="max-w-7xl mx-auto">
-          {children}
-        </div>
-      </main>
+      <main className="page-container flex-1 py-6 sm:py-8 lg:py-12">{children}</main>
       <Footer />
     </div>
-  )
+  );
 }

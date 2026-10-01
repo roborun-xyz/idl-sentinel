@@ -22,14 +22,25 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-50 border-b bg-background">
-      <div className="container mx-auto px-4">
+      <div className="page-container">
         <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center space-x-8">
+          <div className="flex items-center gap-2 md:gap-8">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 md:hidden"
+              aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-navigation"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </Button>
             <Link href="/" className="flex items-center space-x-3">
               <div className="flex items-center space-x-2">
                 {/* <Monitor className="h-5 w-5" /> */}
                 <div>
-                  <span className="text-lg font-semibold">IDL Sentinel</span>
+                  <span className="text-sm font-semibold sm:text-lg">IDL Sentinel</span>
                 </div>
               </div>
             </Link>
@@ -52,26 +63,16 @@ export function Header() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             <ThemeToggle />
             <WalletButton />
-
-            {/* Mobile menu button */}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
           </div>
         </div>
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div className="border-t py-4 md:hidden">
-            <nav className="flex flex-col space-y-2">
+            <nav id="mobile-navigation" className="flex flex-col space-y-2">
               {navigation.map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.href;
