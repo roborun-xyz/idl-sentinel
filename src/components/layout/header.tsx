@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth/auth-context";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { RepositoryLink } from "./repository-link";
 
 const navigation = [
   { name: "Programs", href: "/programs", icon: Blocks },
@@ -60,6 +61,9 @@ export function Header() {
                   </Link>
                 );
               })}
+              <RepositoryLink className="flex items-center space-x-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
+                <span className="hidden lg:inline">GitHub</span>
+              </RepositoryLink>
             </nav>
           </div>
 
@@ -93,6 +97,10 @@ export function Header() {
                   </Link>
                 );
               })}
+              <RepositoryLink
+                className="flex items-center space-x-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={() => setMobileMenuOpen(false)}
+              />
             </nav>
           </div>
         )}
