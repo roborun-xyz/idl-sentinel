@@ -39,7 +39,8 @@ This directory contains the database schema for IDL Sentinel.
    - Run the contents of `schema.sql` in the Supabase SQL Editor
    - Or use the CLI after creating an initial migration from schema.sql
 
-Note: The CLI is primarily used for syncing schema changes, not initial setup.
+Editing `schema.sql` does not make `supabase db push` apply it. That command uses
+CLI migration files; the documented setup and upgrade paths use the SQL Editor.
 
 ## Database Schema Overview
 
@@ -52,18 +53,32 @@ The database consists of the following tables:
   - Each user can configure Slack and Telegram notifications
 
 - **monitored_programs**: Solana programs being monitored
-  - Only admins can create/update/delete programs
-  - Regular users can watch programs via the watchlist
+  - Admins create programs directly; signed-in users can activate a new program
+    after a verified USDC payment
+  - Admins and the registry owner (`owner_id`) can edit or delete a program
+  - Only admins can change active status; any signed-in user can watch a program
 
 - **idl_snapshots**: Historical IDL versions
   - Stores complete IDL JSON for each snapshot
-  - Uses SHA-256 hash for change detection
+  - Uses SHA-256 of normalized JSON for change detection against the latest version
+  - Returning to earlier IDL content creates a new chronological version
 
 - **idl_changes**: Detected changes between versions
   - Categorized by severity (low, medium, high, critical)
   - Tracks notification status for different channels
 
 ### Supporting Tables
+
+- **program_activation_payments**: Payment intents for new shared programs
+  - Stores the payer, exact fee, mint, treasury token account, reference, and status
+  - Confirmed transactions are consumed when activation completes
+
+- **notification_deliveries**: Per-user, per-change, per-channel delivery receipts
+  - Preserves successful deliveries while failed recipients are retried
+
+- **auth_nonces**: Expiring, single-use wallet login challenges
+
+- **cron_locks**: Database leases for monitoring and notification workers
 
 - **user_watchlist**: Programs users are subscribed to
   - Users receive notifications only for watched programs
@@ -118,22 +133,19 @@ transaction recovery, nonce consumption, and query pagination locally.
 When making changes to the database:
 
 1. Update `schema.sql` to reflect the new desired state
-2. Use Supabase CLI to sync changes:
-
-   ```bash
-   # Link to your project (first time only)
-   npx supabase link --project-ref your-project-ref
-
-   # Pull current remote schema to see what changed
-   npx supabase db pull
-
-   # Review the generated migration, then push it
-   npx supabase db push
-   ```
+2. Provide a matching upgrade script for existing installations, preserving data
+   and the service-role access model
+3. Keep the current reliability upgrade synchronized with its embedded copy in
+   `schema.sql` when changing that upgrade
+4. Run `pnpm test` to check fresh setup and upgrades locally
+5. Apply the reviewed SQL through the SQL Editor using the deployment sequence above
 
 ### Migrations Directory
 
-The `migrations/` directory is **not used** in this project. All schema changes should be made by updating `schema.sql` and using the Supabase CLI to sync.
+The `migrations/` directory contains historical SQL, including
+`add_preferred_explorer.sql`. It is not a complete deployment migration chain.
+Use `schema.sql` for fresh setup and the documented upgrade script for existing
+installations; do not apply historical scripts after the current upgrade.
 
 ## Security
 
@@ -156,9 +168,12 @@ signed JWT cookies and database-backed, single-use nonces; it does not rely on
 
 Check that:
 
-1. RLS is enabled on the table
-2. Appropriate policies exist
-3. You're using the correct Supabase client (with service role key for admin operations)
+1. The server has the correct `SUPABASE_SERVICE_ROLE_KEY` for this project
+2. The current schema or upgrade has been applied completely
+3. Browser requests go through Next.js APIs, which enforce session and ownership checks
+
+Direct table access using an anonymous or Supabase authenticated-role client is
+intentionally denied.
 
 ### Issue: Missing tables
 
@@ -166,7 +181,8 @@ Ensure you've run the complete `schema.sql` file in order, without errors.
 
 ## Backups
 
-Supabase automatically backs up your database daily. You can also:
+Configure backups for your deployment and verify the available restore points.
+For manual exports, you can:
 
 1. Export your database from the Supabase dashboard
 2. Use `pg_dump` with your database credentials
