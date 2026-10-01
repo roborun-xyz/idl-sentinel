@@ -1,225 +1,79 @@
-import { supabaseAdmin, type IdlSnapshot } from '../supabase'
-import type { SolanaIdl } from '../solana/idl-fetcher'
+import { supabaseAdmin, type IdlSnapshot } from "../supabase";
+import type { SolanaIdl } from "../solana/idl-fetcher";
+import type { DetectedChange } from "../monitoring/change-detector";
 
+export type SnapshotSummary = Omit<IdlSnapshot, "idl_content">;
 export interface SnapshotInsertResult {
-  snapshot: IdlSnapshot
-  created: boolean
+  snapshot: IdlSnapshot;
+  created: boolean;
+  changes_count: number;
 }
 
-/**
- * Get the latest snapshot for a program
- */
-export async function getLatestSnapshot(programId: string): Promise<IdlSnapshot | null> {
-  const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('*')
-    .eq('program_id', programId)
-    .order('fetched_at', { ascending: false })
-    .limit(1)
-    .single()
-
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return null // Not found
-    }
-    console.error('Error fetching latest snapshot:', error)
-    throw new Error(`Failed to fetch latest snapshot: ${error.message}`)
-  }
-
-  return data
-}
-
-/**
- * Check if a snapshot with the given hash already exists
- */
-export async function snapshotExists(programId: string, idlHash: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('id')
-    .eq('program_id', programId)
-    .eq('idl_hash', idlHash)
-    .limit(1)
-
-  if (error) {
-    console.error('Error checking snapshot existence:', error)
-    throw new Error(`Failed to check snapshot existence: ${error.message}`)
-  }
-
-  return (data?.length || 0) > 0
-}
-
-async function getSnapshotByHash(programId: string, idlHash: string): Promise<IdlSnapshot | null> {
-  const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('*')
-    .eq('program_id', programId)
-    .eq('idl_hash', idlHash)
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    console.error('Error fetching snapshot by hash:', error)
-    throw new Error(`Failed to fetch snapshot by hash: ${error.message}`)
-  }
-
-  return data
-}
-
-/**
- * Create a new IDL snapshot
- */
-export async function createSnapshot(
+export async function getLatestSnapshot(
   programId: string,
-  idlHash: string,
-  idlContent: SolanaIdl
-): Promise<IdlSnapshot> {
-  const result = await createSnapshotIfNotExists(programId, idlHash, idlContent)
-  return result.snapshot
+  signal?: AbortSignal
+): Promise<IdlSnapshot | null> {
+  const { data, error } = await supabaseAdmin
+    .from("idl_snapshots")
+    .select("*")
+    .eq("program_id", programId)
+    .order("version_number", { ascending: false })
+    .order("fetched_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .abortSignal(signal ?? AbortSignal.timeout(15_000))
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch latest snapshot: ${error.message}`);
+  return data;
 }
 
-/**
- * Create a snapshot, returning an existing row if another worker won the insert race.
- */
-export async function createSnapshotIfNotExists(
+// The database locks the program and commits the snapshot and its changes together.
+export async function recordIdlTransition(
   programId: string,
-  idlHash: string,
-  idlContent: SolanaIdl
+  expectedSnapshotId: string | null,
+  hash: string,
+  content: SolanaIdl,
+  changes: DetectedChange[],
+  initialOnly = false,
+  signal?: AbortSignal
 ): Promise<SnapshotInsertResult> {
-  // Get the next version number
-  const { data: latestSnapshot, error: latestError } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('version_number')
-    .eq('program_id', programId)
-    .order('version_number', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (latestError) {
-    console.error('Error fetching latest snapshot version:', latestError)
-    throw new Error(`Failed to fetch latest snapshot version: ${latestError.message}`)
-  }
-
-  const nextVersion = (latestSnapshot?.version_number || 0) + 1
-
   const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .insert({
-      program_id: programId,
-      idl_hash: idlHash,
-      idl_content: idlContent,
-      version_number: nextVersion
+    .rpc("record_idl_transition", {
+      p_program_id: programId,
+      p_expected_snapshot_id: expectedSnapshotId,
+      p_hash: hash,
+      p_content: content,
+      p_changes: changes,
+      p_initial_only: initialOnly,
     })
-    .select()
-    .single()
-
-  if (error) {
-    if (error.code === '23505') {
-      const existingSnapshot = await getSnapshotByHash(programId, idlHash)
-      if (existingSnapshot) {
-        return { snapshot: existingSnapshot, created: false }
-      }
-    }
-
-    console.error('Error creating snapshot:', error)
-    throw new Error(`Failed to create snapshot: ${error.message}`)
-  }
-
-  return { snapshot: data, created: true }
+    .abortSignal(signal ?? AbortSignal.timeout(15_000));
+  if (error) throw new Error(`Failed to record IDL transition: ${error.message}`);
+  return data as SnapshotInsertResult;
 }
 
-/**
- * Get all snapshots for a program
- */
 export async function getProgramSnapshots(
   programId: string,
-  limit: number = 10
+  limit = 10
 ): Promise<IdlSnapshot[]> {
   const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('*')
-    .eq('program_id', programId)
-    .order('fetched_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    console.error('Error fetching program snapshots:', error)
-    throw new Error(`Failed to fetch program snapshots: ${error.message}`)
-  }
-
-  return data || []
+    .from("idl_snapshots")
+    .select("*")
+    .eq("program_id", programId)
+    .order("version_number", { ascending: false })
+    .order("fetched_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Failed to fetch snapshots: ${error.message}`);
+  return data || [];
 }
 
-/**
- * Get a specific snapshot by ID
- */
-export async function getSnapshotById(id: string): Promise<IdlSnapshot | null> {
+export async function getSnapshotById(id: string, programId: string): Promise<IdlSnapshot | null> {
   const { data, error } = await supabaseAdmin
-    .from('idl_snapshots')
-    .select('*')
-    .eq('id', id)
-    .single()
-
-  if (error) {
-    if (error.code === 'PGRST116') {
-      return null // Not found
-    }
-    console.error('Error fetching snapshot by ID:', error)
-    throw new Error(`Failed to fetch snapshot: ${error.message}`)
-  }
-
-  return data
-}
-
-/**
- * Delete old snapshots, keeping only the latest N snapshots per program
- */
-export async function cleanupOldSnapshots(keepCount: number = 50): Promise<number> {
-  // Get all programs
-  const { data: programs, error: programsError } = await supabaseAdmin
-    .from('monitored_programs')
-    .select('id')
-
-  if (programsError) {
-    console.error('Error fetching programs for cleanup:', programsError)
-    throw new Error(`Failed to fetch programs for cleanup: ${programsError.message}`)
-  }
-
-  let totalDeleted = 0
-
-  for (const program of programs || []) {
-    // Get snapshots for this program, ordered by creation date (newest first)
-    const { data: snapshots, error: snapshotsError } = await supabaseAdmin
-      .from('idl_snapshots')
-      .select('id')
-      .eq('program_id', program.id)
-      .order('fetched_at', { ascending: false })
-
-    if (snapshotsError) {
-      console.error(`Error fetching snapshots for program ${program.id}:`, snapshotsError)
-      continue
-    }
-
-    if (!snapshots || snapshots.length <= keepCount) {
-      continue // Nothing to delete
-    }
-
-    // Get IDs of snapshots to delete (all except the latest keepCount)
-    const snapshotsToDelete = snapshots.slice(keepCount).map(s => s.id)
-
-    // Delete old snapshots
-    const { error: deleteError } = await supabaseAdmin
-      .from('idl_snapshots')
-      .delete()
-      .in('id', snapshotsToDelete)
-
-    if (deleteError) {
-      console.error(`Error deleting old snapshots for program ${program.id}:`, deleteError)
-      continue
-    }
-
-    totalDeleted += snapshotsToDelete.length
-    console.log(`Deleted ${snapshotsToDelete.length} old snapshots for program ${program.id}`)
-  }
-
-  return totalDeleted
+    .from("idl_snapshots")
+    .select("*")
+    .eq("id", id)
+    .eq("program_id", programId)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to fetch snapshot: ${error.message}`);
+  return data;
 }

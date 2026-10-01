@@ -8,8 +8,9 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-class SimpleCache {
-  private cache: Map<string, CacheEntry<any>> = new Map();
+export class SimpleCache {
+  private pending = new Map<string, Promise<unknown>>();
+  private cache: Map<string, CacheEntry<unknown>> = new Map();
 
   /**
    * Get a value from cache
@@ -28,7 +29,7 @@ class SimpleCache {
       return null;
     }
 
-    return entry.value;
+    return entry.value as T;
   }
 
   /**
@@ -44,6 +45,7 @@ class SimpleCache {
    */
   delete(key: string): void {
     this.cache.delete(key);
+    this.pending.delete(key);
   }
 
   /**
@@ -51,6 +53,7 @@ class SimpleCache {
    */
   clear(): void {
     this.cache.clear();
+    this.pending.clear();
   }
 
   /**
@@ -70,19 +73,24 @@ class SimpleCache {
    * If the key exists and is not expired, return cached value
    * Otherwise, compute the value, cache it, and return it
    */
-  async getOrCompute<T>(
-    key: string,
-    computeFn: () => Promise<T>,
-    ttlSeconds: number
-  ): Promise<T> {
+  async getOrCompute<T>(key: string, computeFn: () => Promise<T>, ttlSeconds: number): Promise<T> {
     const cached = this.get<T>(key);
     if (cached !== null) {
       return cached;
     }
 
-    const value = await computeFn();
-    this.set(key, value, ttlSeconds);
-    return value;
+    const pending = this.pending.get(key);
+    if (pending) return pending as Promise<T>;
+    const task = computeFn()
+      .then((value) => {
+        if (this.pending.get(key) === task) this.set(key, value, ttlSeconds);
+        return value;
+      })
+      .finally(() => {
+        if (this.pending.get(key) === task) this.pending.delete(key);
+      });
+    this.pending.set(key, task);
+    return task;
   }
 }
 
@@ -90,17 +98,20 @@ class SimpleCache {
 export const cache = new SimpleCache();
 
 // Run cleanup every 5 minutes
-if (typeof setInterval !== 'undefined') {
-  setInterval(() => {
-    cache.cleanup();
-  }, 5 * 60 * 1000);
+if (typeof setInterval !== "undefined") {
+  setInterval(
+    () => {
+      cache.cleanup();
+    },
+    5 * 60 * 1000
+  ).unref?.();
 }
 
 // Cache invalidation helpers
 export const CacheKeys = {
-  DASHBOARD_STATS: 'dashboard:stats',
-  CHANGE_STATISTICS: 'change:statistics',
-  ALL_PROGRAMS: 'programs:all',
+  DASHBOARD_STATS: "dashboard:stats",
+  CHANGE_STATISTICS: "change:statistics",
+  ALL_PROGRAMS: "programs:all",
 } as const;
 
 // Cache TTLs in seconds

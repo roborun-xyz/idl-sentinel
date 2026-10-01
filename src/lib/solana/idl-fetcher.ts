@@ -8,25 +8,28 @@ export interface IdlAccount {
   data: Buffer;
 }
 
+export interface IdlInstructionAccount {
+  name: string;
+  isMut?: boolean;
+  isSigner?: boolean;
+  writable?: boolean;
+  signer?: boolean;
+  accounts?: IdlInstructionAccount[];
+  [key: string]: unknown;
+}
+
 export interface SolanaIdl {
   version?: string;
   name: string;
   address?: string;
   instructions: Array<{
     name: string;
-    accounts: Array<{
-      name: string;
-      isMut?: boolean;
-      isSigner?: boolean;
-      writable?: boolean;
-      signer?: boolean;
-      [key: string]: any;
-    }>;
+    accounts: IdlInstructionAccount[];
     args: Array<{
       name: string;
-      type: any;
+      type: unknown;
     }>;
-    [key: string]: any;
+    [key: string]: unknown;
   }>;
   accounts?: Array<{
     name: string;
@@ -34,10 +37,10 @@ export interface SolanaIdl {
       kind: string;
       fields: Array<{
         name: string;
-        type: any;
+        type: unknown;
       }>;
     };
-    [key: string]: any;
+    [key: string]: unknown;
   }>;
   types?: Array<{
     name: string;
@@ -45,13 +48,13 @@ export interface SolanaIdl {
       kind: string;
       fields?: Array<{
         name: string;
-        type: any;
+        type: unknown;
       }>;
       variants?: Array<{
         name: string;
         fields?: Array<{
           name: string;
-          type: any;
+          type: unknown;
         }>;
       }>;
     };
@@ -61,12 +64,12 @@ export interface SolanaIdl {
     name: string;
     msg?: string;
   }>;
-  events?: any[];
+  events?: unknown[];
   metadata?: {
     name?: string;
     version?: string;
     address: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -150,12 +153,14 @@ export function deriveProgramMetadataAddress(
 export async function fetchIdlFromChain(
   connection: Connection,
   programId: string,
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  signal?: AbortSignal
 ): Promise<SolanaIdl | null> {
   const programPubkey = new PublicKey(programId);
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    signal?.throwIfAborted();
     try {
       console.log(`Fetching IDL for program ${programId}, attempt ${attempt}/${maxRetries}`);
 
@@ -165,7 +170,7 @@ export async function fetchIdlFromChain(
         return normalizeFetchedIdl(anchorIdl, programId);
       }
 
-      const programMetadataIdl = await fetchProgramMetadataIdl(connection, programPubkey);
+      const programMetadataIdl = await fetchProgramMetadataIdl(connection, programPubkey, signal);
       if (programMetadataIdl) {
         console.log(`Successfully fetched Program Metadata IDL for program ${programId}`);
         return normalizeFetchedIdl(programMetadataIdl, programId);
@@ -174,6 +179,7 @@ export async function fetchIdlFromChain(
       console.log(`No IDL account found for program ${programId}`);
       return null;
     } catch (error) {
+      signal?.throwIfAborted();
       lastError = error as Error;
       console.warn(`Attempt ${attempt} failed for program ${programId}:`, error);
 
@@ -199,7 +205,7 @@ export async function fetchIdlFromChain(
 async function fetchAnchorIdl(
   connection: Connection,
   programPubkey: PublicKey
-): Promise<any | null> {
+): Promise<unknown | null> {
   const idlAddress = await deriveIdlAddress(programPubkey);
   const accountInfo = await connection.getAccountInfo(idlAddress);
 
@@ -217,8 +223,9 @@ async function fetchAnchorIdl(
  */
 async function fetchProgramMetadataIdl(
   connection: Connection,
-  programPubkey: PublicKey
-): Promise<any | null> {
+  programPubkey: PublicKey,
+  signal?: AbortSignal
+): Promise<unknown | null> {
   const canonicalAddress = deriveProgramMetadataAddress(programPubkey);
   const canonicalAccount = await connection.getAccountInfo(canonicalAddress);
 
@@ -227,7 +234,8 @@ async function fetchProgramMetadataIdl(
       connection,
       canonicalAddress,
       canonicalAccount,
-      programPubkey
+      programPubkey,
+      signal
     );
     if (idl) {
       return idl;
@@ -240,7 +248,7 @@ async function fetchProgramMetadataIdl(
     .sort((a, b) => a.pubkey.toBase58().localeCompare(b.pubkey.toBase58()));
 
   for (const { pubkey, account } of candidates) {
-    const idl = await parseProgramMetadataIdl(connection, pubkey, account, programPubkey);
+    const idl = await parseProgramMetadataIdl(connection, pubkey, account, programPubkey, signal);
     if (idl) {
       console.log(`Using non-canonical Program Metadata IDL account ${pubkey.toBase58()}`);
       return idl;
@@ -281,7 +289,7 @@ async function findProgramMetadataIdlAccounts(
     return accounts.map(({ pubkey, account }) => ({ pubkey, account }));
   } catch (error) {
     console.warn("Failed to discover Program Metadata IDL accounts:", error);
-    return [];
+    throw error;
   }
 }
 
@@ -321,7 +329,7 @@ function parseIdlAccount(accountInfo: AccountInfo<Buffer>): SolanaIdl | null {
     return idl;
   } catch (error) {
     console.error("Error parsing IDL account:", error);
-    return null;
+    throw error;
   }
 }
 
@@ -329,8 +337,9 @@ async function parseProgramMetadataIdl(
   connection: Connection,
   address: PublicKey,
   accountInfo: AccountInfo<Buffer>,
-  expectedProgram: PublicKey
-): Promise<any | null> {
+  expectedProgram: PublicKey,
+  signal?: AbortSignal
+): Promise<unknown | null> {
   try {
     if (!accountInfo.owner.equals(PROGRAM_METADATA_PROGRAM_ID)) {
       return null;
@@ -346,11 +355,11 @@ async function parseProgramMetadataIdl(
       return null;
     }
 
-    const content = await unpackProgramMetadataContent(connection, metadata);
+    const content = await unpackProgramMetadataContent(connection, metadata, signal);
     return parseProgramMetadataContent(content, metadata.format);
   } catch (error) {
     console.warn(`Failed to parse Program Metadata account ${address.toBase58()}:`, error);
-    return null;
+    throw error;
   }
 }
 
@@ -400,7 +409,8 @@ function parseProgramMetadataAccount(address: PublicKey, data: Buffer): ProgramM
 
 async function unpackProgramMetadataContent(
   connection: Connection,
-  metadata: ProgramMetadataAccount
+  metadata: ProgramMetadataAccount,
+  signal?: AbortSignal
 ): Promise<string> {
   switch (metadata.dataSource) {
     case MetadataDataSource.Direct:
@@ -410,6 +420,7 @@ async function unpackProgramMetadataContent(
       const url = decodeProgramMetadataData(metadata.data, metadata);
       const response = await fetchWithTimeout(url, {
         timeoutMs: PROGRAM_METADATA_URL_TIMEOUT_MS,
+        signal,
       });
       if (!response.ok) {
         throw new Error(`Failed to fetch Program Metadata URL ${url}: ${response.status}`);
@@ -516,58 +527,76 @@ function decodeProgramMetadataSeed(seedBytes: Buffer): string {
   return seedBytes.toString("utf8").replace(/\0+$/g, "");
 }
 
-function normalizeFetchedIdl(idl: any, programId: string): SolanaIdl {
-  return {
-    ...idl,
-    name: idl.name || idl.metadata?.name || programId,
-    version: idl.version || idl.metadata?.version,
+function normalizeFetchedIdl(value: unknown, programId: string): SolanaIdl {
+  if (!value || typeof value !== "object") throw new Error("IDL must be an object");
+  const raw = value as Partial<SolanaIdl>;
+  const idl = {
+    ...raw,
+    name: raw.name || raw.metadata?.name || programId,
+    version: raw.version || raw.metadata?.version,
   };
+  if (!validateIdl(idl)) throw new Error("Invalid IDL structure");
+  return idl;
 }
 
-/**
- * Validates that an IDL has the expected structure
- */
-export function validateIdl(idl: any): idl is SolanaIdl {
-  if (!idl || typeof idl !== "object") {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function validAccounts(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (account) =>
+        isRecord(account) &&
+        typeof account.name === "string" &&
+        (account.accounts === undefined || validAccounts(account.accounts))
+    )
+  );
+}
+export function validateIdl(value: unknown): value is SolanaIdl {
+  if (!isRecord(value)) return false;
+  const name =
+    value.name || (isRecord(value.metadata) ? value.metadata.name : undefined) || value.address;
+  if (typeof name !== "string" || !Array.isArray(value.instructions)) return false;
+  if (
+    !value.instructions.every(
+      (instruction) =>
+        isRecord(instruction) &&
+        typeof instruction.name === "string" &&
+        validAccounts(instruction.accounts) &&
+        Array.isArray(instruction.args) &&
+        instruction.args.every(
+          (arg) => isRecord(arg) && typeof arg.name === "string" && "type" in arg
+        )
+    )
+  )
     return false;
-  }
-
-  const idlName = idl.name || idl.metadata?.name || idl.address;
-  if (!idlName || typeof idlName !== "string") {
-    return false;
-  }
-
-  if (!idl.instructions || !Array.isArray(idl.instructions)) {
-    return false;
-  }
-
-  // Validate instruction structure
-  for (const instruction of idl.instructions) {
-    if (!instruction.name || typeof instruction.name !== "string") {
+  for (const field of ["accounts", "types", "errors"] as const) {
+    if (
+      value[field] !== undefined &&
+      (!Array.isArray(value[field]) ||
+        !value[field].every((item) => isRecord(item) && typeof item.name === "string"))
+    )
       return false;
-    }
-    if (!instruction.accounts || !Array.isArray(instruction.accounts)) {
-      return false;
-    }
-    if (!instruction.args || !Array.isArray(instruction.args)) {
-      return false;
-    }
   }
-
   return true;
 }
 
 /**
  * Creates a connection to Solana RPC
  */
-export function createSolanaConnection(rpcUrl?: string): Connection {
-  const url = rpcUrl || process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
+export function createSolanaConnection(rpcUrl?: string, signal?: AbortSignal): Connection {
+  const url = rpcUrl || process.env.SOLANA_RPC_URL;
+  if (!url)
+    throw new Error("SOLANA_RPC_URL must be configured (use your Helius endpoint for mainnet)");
   const config: ConnectionConfig = {
+    disableRetryOnRateLimit: true,
     commitment: "confirmed",
     fetch: (input, init) =>
       fetchWithTimeout(input, {
         ...(init || {}),
         timeoutMs: SOLANA_RPC_TIMEOUT_MS,
+        signal,
       }),
   };
 

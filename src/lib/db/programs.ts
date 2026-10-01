@@ -3,19 +3,22 @@ import { supabaseAdmin, type MonitoredProgram } from '../supabase'
 /**
  * Get all active monitored programs
  */
-export async function getActivePrograms(): Promise<MonitoredProgram[]> {
+export async function getActivePrograms(before: string): Promise<MonitoredProgram[]> {
   const { data, error } = await supabaseAdmin
-    .from('monitored_programs')
-    .select('*')
-    .eq('is_active', true)
-    .order('created_at', { ascending: false })
+    .from("monitored_programs")
+    .select("*")
+    .eq("is_active", true)
+    .or(`last_polled_at.is.null,last_polled_at.lt.${before}`)
+    .order("last_polled_at", { ascending: true, nullsFirst: true })
+    .order("id")
+    .limit(100);
 
   if (error) {
-    console.error('Error fetching active programs:', error)
-    throw new Error(`Failed to fetch active programs: ${error.message}`)
+    console.error("Error fetching active programs:", error);
+    throw new Error(`Failed to fetch active programs: ${error.message}`);
   }
 
-  return data || []
+  return data || [];
 }
 
 /**

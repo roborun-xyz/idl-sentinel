@@ -235,7 +235,7 @@ function detectAccountChanges(oldIdl: SolanaIdl, newIdl: SolanaIdl): DetectedCha
           newValue: newAccount,
           description: `Modified account type structure`,
         },
-        severity: "medium",
+        severity: "high",
       });
     }
   }
@@ -313,7 +313,7 @@ function detectErrorChanges(oldIdl: SolanaIdl, newIdl: SolanaIdl): DetectedChang
  */
 function calculateInstructionSeverity(
   changeType: "added" | "removed" | "modified",
-  instruction: any
+  instruction: SolanaIdl["instructions"][number]
 ): ChangeSeverity {
   if (changeType === "removed") {
     return "critical";
@@ -334,63 +334,45 @@ function calculateInstructionSeverity(
 /**
  * Gets detailed information about instruction modifications
  */
+type Instruction = SolanaIdl["instructions"][number];
+type InstructionAccount = Instruction["accounts"][number];
+const severityRank: Record<ChangeSeverity, number> = { low: 0, medium: 1, high: 2, critical: 3 };
+
 function getInstructionModificationDetails(
-  oldInstruction: any,
-  newInstruction: any
-): {
-  summary: string;
-  description: string;
-  severity: ChangeSeverity;
-} {
+  oldInstruction: Instruction,
+  newInstruction: Instruction
+) {
   const changes: string[] = [];
-  let severity: ChangeSeverity = "low";
-
-  // Check accounts changes
-  const oldAccounts = oldInstruction.accounts || [];
-  const newAccounts = newInstruction.accounts || [];
-
-  if (oldAccounts.length !== newAccounts.length) {
-    changes.push(`accounts count changed from ${oldAccounts.length} to ${newAccounts.length}`);
-    severity = "high"; // Changing account structure is significant
-  }
-
-  // Check args changes
-  const oldArgs = oldInstruction.args || [];
-  const newArgs = newInstruction.args || [];
-
-  if (oldArgs.length !== newArgs.length) {
-    changes.push(`arguments count changed from ${oldArgs.length} to ${newArgs.length}`);
-    severity = "medium";
-  }
-
-  // Check for account permission changes
-  for (let i = 0; i < Math.min(oldAccounts.length, newAccounts.length); i++) {
-    const oldAcc = oldAccounts[i];
-    const newAcc = newAccounts[i];
-
-    if (isWritableAccount(oldAcc) !== isWritableAccount(newAcc)) {
-      changes.push(`account '${newAcc.name}' mutability changed`);
-      severity = "high";
+  let severity: ChangeSeverity = "medium";
+  const add = (message: string, level: ChangeSeverity) => {
+    changes.push(message);
+    if (severityRank[level] > severityRank[severity]) severity = level;
+  };
+  const compareAccounts = (
+    oldAccounts: InstructionAccount[],
+    newAccounts: InstructionAccount[],
+    path = ""
+  ) => {
+    if (oldAccounts.length !== newAccounts.length) add("accounts count changed", "high");
+    for (let i = 0; i < Math.min(oldAccounts.length, newAccounts.length); i++) {
+      const oldAcc = oldAccounts[i],
+        newAcc = newAccounts[i];
+      const name = path + newAcc.name;
+      if (oldAcc.name !== newAcc.name) add("account order/name changed at " + name, "high");
+      if (Boolean(oldAcc.isMut ?? oldAcc.writable) !== Boolean(newAcc.isMut ?? newAcc.writable))
+        add("account " + name + " mutability changed", "high");
+      if (Boolean(oldAcc.isSigner ?? oldAcc.signer) !== Boolean(newAcc.isSigner ?? newAcc.signer))
+        add("account " + name + " signer requirement changed", "critical");
+      compareAccounts(oldAcc.accounts || [], newAcc.accounts || [], name + ".");
     }
-
-    if (isSignerAccount(oldAcc) !== isSignerAccount(newAcc)) {
-      changes.push(`account '${newAcc.name}' signer requirement changed`);
-      severity = "critical";
-    }
-  }
-
-  const summary = changes.length > 0 ? changes.join(", ") : "structure modified";
-  const description = `Instruction modification details: ${summary}`;
-
-  return { summary, description, severity };
-}
-
-function isWritableAccount(account: any): boolean {
-  return Boolean(account.isMut ?? account.writable);
-}
-
-function isSignerAccount(account: any): boolean {
-  return Boolean(account.isSigner ?? account.signer);
+  };
+  compareAccounts(oldInstruction.accounts || [], newInstruction.accounts || []);
+  if (!deepEqual(oldInstruction.args || [], newInstruction.args || []))
+    add("argument layout changed", "high");
+  if (!deepEqual(oldInstruction.discriminator, newInstruction.discriminator))
+    add("instruction discriminator changed", "critical");
+  const summary = changes.join(", ") || "structure modified";
+  return { summary, description: "Instruction modification details: " + summary, severity };
 }
 
 function formatErrorKey(key: string | number): string {
@@ -400,7 +382,7 @@ function formatErrorKey(key: string | number): string {
 /**
  * Deep equality check for objects
  */
-function deepEqual(obj1: any, obj2: any): boolean {
+function deepEqual(obj1: unknown, obj2: unknown): boolean {
   if (obj1 === obj2) return true;
 
   if (obj1 == null || obj2 == null) return false;
@@ -415,8 +397,9 @@ function deepEqual(obj1: any, obj2: any): boolean {
   if (keys1.length !== keys2.length) return false;
 
   for (const key of keys1) {
-    if (!keys2.includes(key)) return false;
-    if (!deepEqual(obj1[key], obj2[key])) return false;
+    if (!Object.prototype.hasOwnProperty.call(obj2, key)) return false;
+    if (!deepEqual((obj1 as Record<string, unknown>)[key], (obj2 as Record<string, unknown>)[key]))
+      return false;
   }
 
   return true;

@@ -1,57 +1,9 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { createHash } from "crypto";
-import type { SolanaIdl } from "./solana/idl-fetcher";
+import bs58 from "bs58";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
-
-/**
- * Calculates a hash of the IDL content for change detection
- */
-export function calculateIdlHash(idl: SolanaIdl): string {
-  const normalizedIdl = normalizeIdlForHash(idl);
-  const idlString = stableStringify(normalizedIdl);
-
-  // Create SHA-256 hash
-  return createHash("sha256").update(idlString).digest("hex");
-}
-
-function normalizeIdlForHash(idl: SolanaIdl): any {
-  return {
-    ...idl,
-    name: idl.name || idl.metadata?.name,
-    version: idl.version || idl.metadata?.version,
-    instructions:
-      idl.instructions?.map((instruction) => ({
-        ...instruction,
-        accounts:
-          instruction.accounts?.map((account) => ({
-            ...account,
-            isMut: account.isMut ?? account.writable ?? false,
-            isSigner: account.isSigner ?? account.signer ?? false,
-          })) || [],
-      })) || [],
-  };
-}
-
-function stableStringify(value: any): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`;
-  }
-
-  const keys = Object.keys(value)
-    .filter((key) => value[key] !== undefined)
-    .sort();
-
-  return `{${keys
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
-    .join(",")}}`;
 }
 
 /**
@@ -137,7 +89,7 @@ export function isValidProgramId(programId: string): boolean {
     }
 
     // Check if it's valid base58
-    const decoded = require("bs58").decode(programId);
+    const decoded = bs58.decode(programId);
 
     // Solana public keys are 32 bytes
     return decoded.length === 32;
@@ -150,17 +102,13 @@ export function isValidProgramId(programId: string): boolean {
  * Generates a random UUID v4
  */
 export function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
+  return crypto.randomUUID();
 }
 
 /**
  * Debounce function for search inputs
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends (...args: never[]) => unknown>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {

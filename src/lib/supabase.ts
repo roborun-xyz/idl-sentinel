@@ -1,14 +1,16 @@
+import { fetchWithTimeout } from "./http";
+import type { SolanaIdl } from "./solana/idl-fetcher";
+import type { ChangeDetails } from "./db/changes";
 import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Client for frontend use
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
 // Admin client for backend operations (API routes)
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: (input, init) => fetchWithTimeout(input, { ...init, timeoutMs: 15_000 }) },
+});
 
 // Database types
 export interface MonitoredProgram {
@@ -27,7 +29,7 @@ export interface IdlSnapshot {
   id: string;
   program_id: string;
   idl_hash: string;
-  idl_content: any;
+  idl_content: SolanaIdl;
   version_number: number;
   fetched_at: string;
 }
@@ -39,7 +41,7 @@ export interface IdlChange {
   new_snapshot_id: string;
   change_type: string;
   change_summary: string;
-  change_details: any;
+  change_details: ChangeDetails;
   severity: "low" | "medium" | "high" | "critical";
   notified: boolean;
   notified_at?: string;
@@ -70,7 +72,7 @@ export interface MonitoringLog {
   program_id?: string;
   log_level: "info" | "warning" | "error";
   message: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 

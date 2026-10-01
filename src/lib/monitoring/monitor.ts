@@ -1,31 +1,21 @@
-import {
-  createSolanaConnection,
-  fetchIdlFromChain,
-  type SolanaIdl,
-} from "../solana/idl-fetcher";
-import { calculateIdlHash, generateUUID } from "../utils";
+import { createSolanaConnection, fetchIdlFromChain } from "../solana/idl-fetcher";
+import { calculateIdlHash } from "./hash";
 import { getActivePrograms } from "../db/programs";
-import {
-  getLatestSnapshot,
-  createSnapshotIfNotExists,
-} from "../db/snapshots";
-import { createChanges } from "../db/changes";
-import { detectChanges } from "./change-detector";
-import { supabaseAdmin } from "../supabase";
+import { getLatestSnapshot, recordIdlTransition } from "../db/snapshots";
+import { detectChanges, type DetectedChange } from "./change-detector";
+import { supabaseAdmin, type MonitoredProgram } from "../supabase";
 import { cache, CacheKeys, CacheTTL } from "../cache";
+import { runPool } from "../concurrency";
 
 export interface MonitoringResult {
   runId: string;
   programsChecked: number;
   snapshotsCreated: number;
   changesDetected: number;
-  errors: Array<{
-    programId: string;
-    error: string;
-  }>;
+  deferred: boolean;
+  errors: Array<{ programId: string; error: string }>;
   duration: number;
 }
-
 export interface InitialIdlFetchResult {
   success: boolean;
   snapshotCreated: boolean;
@@ -33,583 +23,193 @@ export interface InitialIdlFetchResult {
   idlFound: boolean;
 }
 
-/**
- * Immediately fetch IDL for a newly created program
- * This is called when a program is first added to provide immediate validation
- */
-export async function fetchInitialIdl(
-  program: any
-): Promise<InitialIdlFetchResult> {
-  const runId = generateUUID();
-
+export async function fetchInitialIdl(program: MonitoredProgram): Promise<InitialIdlFetchResult> {
   try {
-    console.log(
-      `Fetching initial IDL for program: ${program.name} (${program.program_id})`
+    const idl = await fetchIdlFromChain(
+      createSolanaConnection(undefined, AbortSignal.timeout(60_000)),
+      program.program_id
     );
-
-    // Create Solana connection
-    const connection = createSolanaConnection();
-
-    // Fetch current IDL from chain
-    const currentIdl = await fetchIdlFromChain(connection, program.program_id);
-
-    if (!currentIdl) {
-      console.log(`No IDL found for program ${program.name}`);
-      await logMonitoringEvent(
-        runId,
-        program.id,
-        "warning",
-        "No IDL found on chain during initial fetch"
-      );
+    if (!idl)
       return {
         success: true,
         snapshotCreated: false,
         idlFound: false,
         error: "No IDL found on chain",
       };
-    }
-
-    // Calculate IDL hash
-    const idlHash = calculateIdlHash(currentIdl);
-
-    const snapshotResult = await createSnapshotIfNotExists(program.id, idlHash, currentIdl);
-    console.log(
-      `${snapshotResult.created ? "Created" : "Reused"} initial snapshot for program ${program.name}`
-    );
-
-    await logMonitoringEvent(
-      runId,
+    // An activation racing a cron run must never advance an existing program's history.
+    const result = await recordIdlTransition(
       program.id,
-      "info",
-      snapshotResult.created
-        ? "Initial IDL snapshot created successfully"
-        : "Initial IDL snapshot already existed"
+      null,
+      calculateIdlHash(idl),
+      idl,
+      [],
+      true
     );
-
-    return {
-      success: true,
-      snapshotCreated: snapshotResult.created,
-      idlFound: true,
-    };
+    cache.delete(CacheKeys.DASHBOARD_STATS);
+    return { success: true, snapshotCreated: result.created, idlFound: true };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error(
-      `Error fetching initial IDL for program ${program.name}:`,
-      error
-    );
-
-    await logMonitoringEvent(
-      runId,
-      program.id,
-      "error",
-      `Failed to fetch initial IDL: ${errorMessage}`
-    );
-
     return {
       success: false,
       snapshotCreated: false,
       idlFound: false,
-      error: errorMessage,
+      error: error instanceof Error ? error.message : "Initial fetch failed",
     };
   }
 }
 
-/**
- * Main monitoring function that checks all active programs for IDL changes
- */
-export async function monitorPrograms(): Promise<MonitoringResult> {
-  const runId = generateUUID();
-  const startTime = Date.now();
-
-  console.log(`Starting IDL monitoring run ${runId}`);
-
+export async function monitorPrograms(deadline = Date.now() + 120_000): Promise<MonitoringResult> {
+  const start = Date.now();
+  const cutoff = new Date(start).toISOString();
   const result: MonitoringResult = {
-    runId,
+    runId: crypto.randomUUID(),
     programsChecked: 0,
     snapshotsCreated: 0,
     changesDetected: 0,
+    deferred: false,
     errors: [],
     duration: 0,
   };
-
+  await logMonitoringEvent(result.runId, null, "info", "Starting IDL monitoring run");
   try {
-    // Log monitoring start
-    await logMonitoringEvent(
-      runId,
-      null,
-      "info",
-      "Starting IDL monitoring run"
-    );
-
-    // Get all active programs
-    const programs = await getActivePrograms();
-    console.log(`Found ${programs.length} active programs to monitor`);
-
-    if (programs.length === 0) {
-      await logMonitoringEvent(
-        runId,
-        null,
-        "info",
-        "No active programs to monitor"
-      );
-      result.duration = Date.now() - startTime;
-      return result;
-    }
-
-    // Create Solana connection
-    const connection = createSolanaConnection();
-
-    // Monitor programs in parallel with concurrency limit to avoid overwhelming RPC
-    // Process 10 programs concurrently for optimal performance
-    const CONCURRENCY_LIMIT = 10;
-
-    // Helper to process programs in batches
-    const processBatch = async (batch: typeof programs) => {
-      const batchResults = await Promise.allSettled(
-        batch.map(async (program) => {
-          console.log(
-            `Monitoring program: ${program.name} (${program.program_id})`
-          );
-
-          const programResult = await monitorProgram(runId, connection, program);
-
-          await logMonitoringEvent(
-            runId,
-            program.id,
-            "info",
-            `Program monitored successfully. Snapshot created: ${programResult.snapshotCreated}, Changes: ${programResult.changesDetected}`
-          );
-
-          return { program, programResult };
-        })
-      );
-
-      // Process results and update counters
-      for (const promiseResult of batchResults) {
-        if (promiseResult.status === 'fulfilled') {
-          const { program, programResult } = promiseResult.value;
+    while (Date.now() < deadline) {
+      const programs = await getActivePrograms(cutoff);
+      if (!programs.length) break;
+      const completed = await runPool(
+        programs,
+        10,
+        async (program) => {
           result.programsChecked++;
-          if (programResult.snapshotCreated) {
-            result.snapshotsCreated++;
+          try {
+            const checked = await monitorProgram(program);
+            result.snapshotsCreated += Number(checked.created);
+            result.changesDetected += checked.changes_count;
+            await logMonitoringEvent(
+              result.runId,
+              program.id,
+              "info",
+              `Program checked; changes: ${checked.changes_count}`
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Monitoring failed";
+            result.errors.push({ programId: program.program_id, error: message });
+            await logMonitoringEvent(result.runId, program.id, "error", message);
           }
-          result.changesDetected += programResult.changesDetected;
-        } else {
-          // Handle rejected promise
-          const errorMessage = promiseResult.reason instanceof Error
-            ? promiseResult.reason.message
-            : "Unknown error";
-
-          // Try to extract program info from error context
-          console.error(`Error monitoring program:`, promiseResult.reason);
-
-          result.errors.push({
-            programId: 'unknown',
-            error: errorMessage,
-          });
-
-          await logMonitoringEvent(
-            runId,
-            null,
-            "error",
-            `Failed to monitor program: ${errorMessage}`
-          );
-        }
+          // Advance the durable polling cursor even after a failed RPC so one bad
+          // program cannot starve the rest of the registry on every scheduler run.
+          const { error } = await supabaseAdmin
+            .from("monitored_programs")
+            .update({ last_polled_at: new Date().toISOString() })
+            .eq("id", program.id);
+          if (error) throw new Error(`Failed to advance polling cursor: ${error.message}`);
+        },
+        () => Date.now() < deadline
+      );
+      if (completed < programs.length) {
+        result.deferred = true;
+        break;
       }
-    };
-
-    // Process programs in batches
-    for (let i = 0; i < programs.length; i += CONCURRENCY_LIMIT) {
-      const batch = programs.slice(i, i + CONCURRENCY_LIMIT);
-      await processBatch(batch);
     }
-
-    // Log completion
-    await logMonitoringEvent(
-      runId,
-      null,
-      "info",
-      `Monitoring run completed. Programs: ${result.programsChecked}, Snapshots: ${result.snapshotsCreated}, Changes: ${result.changesDetected}, Errors: ${result.errors.length}`
-    );
-
-    console.log(`Monitoring run ${runId} completed:`, result);
+    if (Date.now() >= deadline) result.deferred = true;
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    console.error("Fatal error in monitoring run:", error);
-
-    await logMonitoringEvent(
-      runId,
-      null,
-      "error",
-      `Fatal monitoring error: ${errorMessage}`
-    );
-
     result.errors.push({
       programId: "SYSTEM",
-      error: errorMessage,
+      error: error instanceof Error ? error.message : "Monitoring failed",
     });
   }
-
-  result.duration = Date.now() - startTime;
+  result.duration = Date.now() - start;
+  await logMonitoringEvent(
+    result.runId,
+    null,
+    result.errors.length ? "error" : "info",
+    "Monitoring run completed",
+    { duration: result.duration, deferred: result.deferred }
+  );
+  cache.delete(CacheKeys.DASHBOARD_STATS);
   return result;
 }
 
-/**
- * Monitors a single program for IDL changes
- */
-async function monitorProgram(
-  runId: string,
-  connection: any,
-  program: any
-): Promise<{
-  snapshotCreated: boolean;
-  changesDetected: number;
-}> {
-  // Get the latest snapshot for comparison
-  const latestSnapshot = await getLatestSnapshot(program.id);
-
-  // Fetch current IDL from chain
-  let currentIdl = await fetchIdlFromChain(connection, program.program_id);
-
-  if (!currentIdl) {
-    if (!latestSnapshot) {
-      throw new Error("No IDL found on chain and no prior snapshot exists");
-    }
-
-    currentIdl = await confirmMissingIdl(connection, program.program_id);
-
-    if (!currentIdl) {
-      return await recordMissingIdlChange(program, latestSnapshot);
-    }
+async function monitorProgram(program: MonitoredProgram) {
+  const signal = AbortSignal.timeout(60_000);
+  const connection = createSolanaConnection(undefined, signal);
+  const previous = await getLatestSnapshot(program.id, signal);
+  let current = await fetchIdlFromChain(connection, program.program_id, 3, signal);
+  let changes: DetectedChange[];
+  if (!current) {
+    if (!previous) throw new Error("No IDL found on chain and no prior snapshot exists");
+    current = await fetchIdlFromChain(connection, program.program_id, 2, signal);
   }
-
-  // Calculate IDL hash
-  const idlHash = calculateIdlHash(currentIdl);
-
-  if (latestSnapshot?.idl_hash === idlHash) {
-    console.log(`IDL unchanged for program ${program.name}`);
-    return {
-      snapshotCreated: false,
-      changesDetected: 0,
-    };
-  }
-
-  // Create new snapshot
-  const { snapshot: newSnapshot, created } = await createSnapshotIfNotExists(
-    program.id,
-    idlHash,
-    currentIdl
-  );
-
-  if (!created) {
-    console.log(`IDL snapshot already existed for program ${program.name}`);
-    return {
-      snapshotCreated: false,
-      changesDetected: 0,
-    };
-  }
-
-  console.log(`Created new snapshot for program ${program.name}`);
-
-  // Detect changes
-  const oldIdl = latestSnapshot?.idl_content || null;
-  const changes = detectChanges(oldIdl, currentIdl);
-
-  let changesDetected = 0;
-
-  if (changes.length > 0) {
-    console.log(
-      `Detected ${changes.length} changes for program ${program.name}`
-    );
-
-    // Store changes in database
-    await createChanges(
-      program.id,
-      latestSnapshot?.id || null,
-      newSnapshot.id,
-      changes
-    );
-
-    changesDetected = changes.length;
-  }
-
-  return {
-    snapshotCreated: true,
-    changesDetected,
-  };
-}
-
-async function confirmMissingIdl(connection: any, programId: string): Promise<SolanaIdl | null> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
-  try {
-    return await fetchIdlFromChain(connection, programId, 2);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    throw new Error(`Failed to confirm missing IDL: ${errorMessage}`);
-  }
-}
-
-async function recordMissingIdlChange(
-  program: any,
-  latestSnapshot: any
-): Promise<{
-  snapshotCreated: boolean;
-  changesDetected: number;
-}> {
-  const missingIdl = createMissingIdl(program, latestSnapshot.idl_content);
-  const missingHash = calculateIdlHash(missingIdl);
-
-  if (latestSnapshot.idl_hash === missingHash) {
-    console.log(`IDL still missing for program ${program.name}`);
-    return {
-      snapshotCreated: false,
-      changesDetected: 0,
-    };
-  }
-
-  const { snapshot: missingSnapshot, created } = await createSnapshotIfNotExists(
-    program.id,
-    missingHash,
-    missingIdl
-  );
-
-  if (!created) {
-    console.log(`Missing-IDL snapshot already existed for program ${program.name}`);
-    return {
-      snapshotCreated: false,
-      changesDetected: 0,
-    };
-  }
-
-  await createChanges(program.id, latestSnapshot.id, missingSnapshot.id, [
-    {
-      changeType: "idl_removed",
-      changeSummary: `IDL for '${program.name}' is no longer available on chain`,
-      changeDetails: {
-        changeType: "idl_removed",
-        itemName: program.name,
-        oldValue: latestSnapshot.idl_content,
-        newValue: missingIdl,
-        description: "On-chain IDL was not found after a confirmation fetch",
-      },
-      severity: "critical",
-    },
-  ]);
-
-  return {
-    snapshotCreated: true,
-    changesDetected: 1,
-  };
-}
-
-function createMissingIdl(program: any, previousIdl: any): SolanaIdl {
-  const name =
-    previousIdl?.name ||
-    previousIdl?.metadata?.name ||
-    program.name ||
-    program.program_id;
-
-  return {
-    name,
-    address: program.program_id,
-    instructions: [],
-    accounts: [],
-    types: [],
-    errors: [],
-    metadata: {
-      name,
+  if (!current) {
+    current = {
+      name: previous!.idl_content.name || program.name,
       address: program.program_id,
-      idl_sentinel_status: "missing",
-    },
-  };
+      instructions: [],
+      accounts: [],
+      types: [],
+      errors: [],
+      metadata: { address: program.program_id, idl_sentinel_status: "missing" },
+    };
+    changes = [
+      {
+        changeType: "idl_removed",
+        changeSummary: `IDL for '${program.name}' is no longer available on chain`,
+        changeDetails: {
+          changeType: "idl_removed",
+          itemName: program.name,
+          oldValue: previous!.idl_content,
+          newValue: current,
+          description: "IDL missing after confirmation fetch",
+        },
+        severity: "critical",
+      },
+    ];
+  } else {
+    changes = detectChanges(previous?.idl_content || null, current);
+  }
+  const hash = calculateIdlHash(current);
+  if (hash === previous?.idl_hash) return { created: false, changes_count: 0 };
+  return recordIdlTransition(
+    program.id,
+    previous?.id || null,
+    hash,
+    current,
+    changes,
+    false,
+    signal
+  );
 }
 
-/**
- * Logs monitoring events to the database
- */
 async function logMonitoringEvent(
   runId: string,
   programId: string | null,
   level: "info" | "warning" | "error",
   message: string,
-  metadata?: any
-): Promise<void> {
-  try {
-    await supabaseAdmin.from("monitoring_logs").insert({
-      run_id: runId,
-      program_id: programId,
-      log_level: level,
-      message,
-      metadata,
-    });
-  } catch (error) {
-    console.error("Failed to log monitoring event:", error);
-    // Don't throw here to avoid breaking the monitoring flow
-  }
+  metadata?: Record<string, unknown>
+) {
+  const { error } = await supabaseAdmin.from("monitoring_logs").insert({
+    run_id: runId,
+    program_id: programId,
+    log_level: level,
+    message,
+    metadata,
+  });
+  if (error) console.error("Failed to write monitoring log:", error.message);
 }
 
-/**
- * Gets dashboard statistics for the UI
- * Cached for 60 seconds to reduce database load
- */
-export async function getDashboardStats(): Promise<{
+export interface DashboardStats {
   totalPrograms: number;
   activePrograms: number;
   totalChanges: number;
   recentChanges: number;
   lastMonitoringRun: string | null;
-}> {
+}
+export async function getDashboardStats(): Promise<DashboardStats> {
   return cache.getOrCompute(
     CacheKeys.DASHBOARD_STATS,
     async () => {
-      try {
-        // Get total and active programs count
-        const { data: programs, error: programsError } = await supabaseAdmin
-          .from("monitored_programs")
-          .select("id, is_active");
-
-        if (programsError) {
-          console.error("Error fetching programs:", programsError);
-          throw new Error(`Failed to fetch programs: ${programsError.message}`);
-        }
-
-        const totalPrograms = programs?.length ?? 0;
-        const activePrograms =
-          programs?.filter((p) => p.is_active).length ?? 0;
-
-        // Get total changes count
-        const { count: totalChanges, error: changesError } = await supabaseAdmin
-          .from("idl_changes")
-          .select("*", { count: "exact", head: true });
-
-        if (changesError) {
-          console.error("Error fetching total changes:", changesError);
-          throw new Error(`Failed to fetch changes: ${changesError.message}`);
-        }
-
-        // Get recent changes (last 24 hours)
-        const twentyFourHoursAgo = new Date(
-          Date.now() - 24 * 60 * 60 * 1000
-        ).toISOString();
-        const { count: recentChanges, error: recentError } = await supabaseAdmin
-          .from("idl_changes")
-          .select("*", { count: "exact", head: true })
-          .gte("detected_at", twentyFourHoursAgo);
-
-        if (recentError) {
-          console.error("Error fetching recent changes:", recentError);
-          throw new Error(
-            `Failed to fetch recent changes: ${recentError.message}`
-          );
-        }
-
-        // Get last monitoring run time
-        const { data: lastLog, error: logError } = await supabaseAdmin
-          .from("monitoring_logs")
-          .select("created_at")
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-
-        const lastMonitoringRun = lastLog?.created_at ?? null;
-
-        return {
-          totalPrograms,
-          activePrograms,
-          totalChanges: totalChanges ?? 0,
-          recentChanges: recentChanges ?? 0,
-          lastMonitoringRun,
-        };
-      } catch (error) {
-        console.error("Error getting dashboard stats:", error);
-        throw error;
-      }
+      const { data, error } = await supabaseAdmin.rpc("get_dashboard_statistics");
+      if (error) throw new Error(`Failed to fetch dashboard statistics: ${error.message}`);
+      return data as DashboardStats;
     },
     CacheTTL.DASHBOARD_STATS
   );
-}
-
-/**
- * Gets monitoring system statistics
- */
-export async function getMonitoringStats(): Promise<{
-  totalRuns: number;
-  successfulRuns: number;
-  failedRuns: number;
-  lastRunTime: string | null;
-  averageDuration: number;
-}> {
-  // Get unique run IDs and their completion status
-  const { data: runs, error } = await supabaseAdmin
-    .from("monitoring_logs")
-    .select("run_id, log_level, created_at, metadata")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error("Error fetching monitoring stats:", error);
-    throw new Error(`Failed to fetch monitoring stats: ${error.message}`);
-  }
-
-  if (!runs || runs.length === 0) {
-    return {
-      totalRuns: 0,
-      successfulRuns: 0,
-      failedRuns: 0,
-      lastRunTime: null,
-      averageDuration: 0,
-    };
-  }
-
-  // Group by run_id
-  const runGroups = new Map<string, any[]>();
-
-  for (const log of runs) {
-    if (!runGroups.has(log.run_id)) {
-      runGroups.set(log.run_id, []);
-    }
-    runGroups.get(log.run_id)!.push(log);
-  }
-
-  let successfulRuns = 0;
-  let failedRuns = 0;
-  let totalDuration = 0;
-  let durationCount = 0;
-  let lastRunTime: string | null = null;
-
-  for (const [runId, logs] of runGroups) {
-    const hasError = logs.some((log) => log.log_level === "error");
-    const completionLog = logs.find(
-      (log) =>
-        log.message?.includes("completed") || log.message?.includes("Fatal")
-    );
-
-    if (hasError) {
-      failedRuns++;
-    } else {
-      successfulRuns++;
-    }
-
-    // Get duration from metadata if available
-    if (completionLog?.metadata?.duration) {
-      totalDuration += completionLog.metadata.duration;
-      durationCount++;
-    }
-
-    // Update last run time
-    const runTime = logs[0]?.created_at;
-    if (runTime && (!lastRunTime || runTime > lastRunTime)) {
-      lastRunTime = runTime;
-    }
-  }
-
-  return {
-    totalRuns: runGroups.size,
-    successfulRuns,
-    failedRuns,
-    lastRunTime,
-    averageDuration:
-      durationCount > 0 ? Math.round(totalDuration / durationCount) : 0,
-  };
 }
