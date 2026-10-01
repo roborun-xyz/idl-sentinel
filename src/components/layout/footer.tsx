@@ -9,7 +9,7 @@ export function Footer() {
         <div className="flex flex-col items-center justify-between gap-3 text-center text-sm text-slate-600 dark:text-slate-400 sm:flex-row">
           <span>© {new Date().getFullYear()} IDL Sentinel. All rights reserved.</span>
           <RepositoryLink className="inline-flex items-center gap-2 underline-offset-4 transition-colors hover:text-foreground hover:underline">
-            Open source on GitHub
+            GitHub
           </RepositoryLink>
         </div>
       </div>

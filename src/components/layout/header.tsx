@@ -25,11 +25,11 @@ export function Header() {
     <header className="sticky top-0 z-50 border-b bg-background">
       <div className="page-container">
         <div className="flex h-16 items-center justify-between">
-          <div className="flex items-center gap-2 md:gap-8">
+          <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2 md:gap-8">
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 md:hidden"
+              className="h-8 w-8 shrink-0 md:hidden"
               aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
               aria-expanded={mobileMenuOpen}
               aria-controls="mobile-navigation"
@@ -37,16 +37,11 @@ export function Header() {
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
-            <Link href="/" className="flex items-center space-x-3">
-              <div className="flex items-center space-x-2">
-                {/* <Monitor className="h-5 w-5" /> */}
-                <div>
-                  <span className="text-sm font-semibold sm:text-lg">IDL Sentinel</span>
-                </div>
-              </div>
+            <Link href="/" className="min-w-0">
+              <span className="block truncate text-sm font-semibold sm:text-lg">IDL Sentinel</span>
             </Link>
 
-            <nav className="hidden items-center space-x-1 md:flex">
+            <nav className="hidden shrink-0 items-center space-x-1 md:flex">
               {navigation.map((item) => {
                 const Icon = item.icon;
 
@@ -61,13 +56,13 @@ export function Header() {
                   </Link>
                 );
               })}
-              <RepositoryLink className="flex items-center space-x-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground">
-                <span className="hidden lg:inline">GitHub</span>
-              </RepositoryLink>
             </nav>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-4">
+            <RepositoryLink className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+              {null}
+            </RepositoryLink>
             <ThemeToggle />
             <WalletButton />
           </div>
@@ -97,10 +92,6 @@ export function Header() {
                   </Link>
                 );
               })}
-              <RepositoryLink
-                className="flex items-center space-x-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-                onClick={() => setMobileMenuOpen(false)}
-              />
             </nav>
           </div>
         )}
