@@ -12,7 +12,11 @@ export async function GET(request: NextRequest) {
   try {
     const notifications = await runNotificationJobs();
     await Promise.all([cleanupNonces(), cleanupExpiredTokens()]);
-    const errors = [...notifications.slack.errors, ...notifications.telegram_user.errors];
+    const errors = [
+      ...notifications.slack.errors,
+      ...notifications.telegram_user.errors,
+      ...notifications.discord.errors,
+    ];
     return NextResponse.json(
       { success: !errors.length, notifications, errors },
       { status: errors.length ? 500 : 200 }

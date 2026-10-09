@@ -6,6 +6,7 @@ import { queryKeys } from "./query-keys";
 interface UserSettings {
   wallet_address: string;
   slack_webhook_url: string | null;
+  discord_webhook_url: string | null;
   telegram_chat_id: string | null;
   telegram_username: string | null;
   preferred_explorer: "explorer.solana.com" | "solscan.io";
@@ -43,7 +44,10 @@ export function useUpdateSettings() {
   return useMutation({
     mutationFn: async (
       updates: Partial<
-        Pick<UserSettings, "slack_webhook_url" | "telegram_chat_id" | "preferred_explorer">
+        Pick<
+          UserSettings,
+          "slack_webhook_url" | "discord_webhook_url" | "telegram_chat_id" | "preferred_explorer"
+        >
       >
     ) => {
       const response = await fetch("/api/user/settings", {
@@ -70,6 +74,23 @@ export function useTestSlackWebhook() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ test_type: "slack", slack_webhook_url: webhookUrl }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error || "Failed to send test notification");
+      }
+      return response.json();
+    },
+  });
+}
+
+export function useTestDiscordWebhook() {
+  return useMutation({
+    mutationFn: async (webhookUrl: string) => {
+      const response = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_type: "discord", discord_webhook_url: webhookUrl }),
       });
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));

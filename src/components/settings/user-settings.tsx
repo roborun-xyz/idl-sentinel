@@ -11,6 +11,7 @@ import {
   useUserSettings,
   useUpdateSettings,
   useTestSlackWebhook,
+  useTestDiscordWebhook,
   useTestTelegram,
   useTelegramConnect,
   useTelegramConnectionPoll,
@@ -30,12 +31,16 @@ export function UserSettings() {
   });
   const updateSettingsMutation = useUpdateSettings();
   const testSlackMutation = useTestSlackWebhook();
+  const testDiscordMutation = useTestDiscordWebhook();
   const testTelegramMutation = useTestTelegram();
   const telegramConnectMutation = useTelegramConnect();
 
   const settings = settingsData?.user || null;
 
   const [slackDraft, setSlackDraft] = useState<{ wallet: string | null; value: string } | null>(
+    null
+  );
+  const [discordDraft, setDiscordDraft] = useState<{ wallet: string | null; value: string } | null>(
     null
   );
   const [explorerDraft, setExplorerDraft] = useState<{
@@ -48,13 +53,19 @@ export function UserSettings() {
     explorerDraft?.wallet === walletAddress
       ? explorerDraft.value
       : settings?.preferred_explorer || "explorer.solana.com";
+  const discordWebhook =
+    discordDraft?.wallet === walletAddress
+      ? discordDraft.value
+      : settings?.discord_webhook_url || "";
   const setSlackWebhook = (value: string) => setSlackDraft({ wallet: walletAddress, value });
+  const setDiscordWebhook = (value: string) => setDiscordDraft({ wallet: walletAddress, value });
   const setPreferredExplorer = (value: "explorer.solana.com" | "solscan.io") =>
     setExplorerDraft({ wallet: walletAddress, value });
   const [telegramConnectionUrl, setTelegramConnectionUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [slackTestSuccess, setSlackTestSuccess] = useState<boolean | null>(null);
+  const [discordTestSuccess, setDiscordTestSuccess] = useState<boolean | null>(null);
   const [telegramTestSuccess, setTelegramTestSuccess] = useState<boolean | null>(null);
   const [explorerSaveSuccess, setExplorerSaveSuccess] = useState(false);
 
@@ -84,7 +95,10 @@ export function UserSettings() {
       setError(null);
       setSaveSuccess(false);
 
-      await updateSettingsMutation.mutateAsync({ slack_webhook_url: slackWebhook || null });
+      await updateSettingsMutation.mutateAsync({
+        slack_webhook_url: slackWebhook || null,
+        discord_webhook_url: discordWebhook || null,
+      });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
@@ -102,6 +116,20 @@ export function UserSettings() {
       setTimeout(() => setSlackTestSuccess(null), 5000);
     } catch (err) {
       setSlackTestSuccess(false);
+      setError(err instanceof Error ? err.message : "Failed to send test notification");
+    }
+  };
+
+  const testDiscordWebhook = async () => {
+    try {
+      setError(null);
+      setDiscordTestSuccess(null);
+
+      await testDiscordMutation.mutateAsync(discordWebhook);
+      setDiscordTestSuccess(true);
+      setTimeout(() => setDiscordTestSuccess(null), 5000);
+    } catch (err) {
+      setDiscordTestSuccess(false);
       setError(err instanceof Error ? err.message : "Failed to send test notification");
     }
   };
@@ -147,6 +175,7 @@ export function UserSettings() {
   const saving = updateSettingsMutation.isPending;
   const savingExplorer = updateSettingsMutation.isPending;
   const testingSlack = testSlackMutation.isPending;
+  const testingDiscord = testDiscordMutation.isPending;
   const testingTelegram = testTelegramMutation.isPending;
   const connectingTelegram = telegramConnectMutation.isPending;
   const disconnectingTelegram = updateSettingsMutation.isPending;
@@ -310,7 +339,7 @@ export function UserSettings() {
       <Card className="p-6">
         <h2 className="mb-2 text-xl font-semibold">Notification Settings</h2>
         <p className="mb-6 text-sm text-muted-foreground">
-          Configure how you want to receive notifications about IDL changes
+          Alerts go to every channel you configure here, for programs in your watchlist.
         </p>
 
         <div className="space-y-4">
@@ -361,6 +390,65 @@ export function UserSettings() {
                   <>
                     <Check className="mr-1 h-4 w-4" />
                     Test notification sent successfully! Check your Slack channel.
+                  </>
+                ) : (
+                  <>
+                    <X className="mr-1 h-4 w-4" />
+                    Failed to send test notification. Please check your webhook URL.
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="discord-webhook" className="mb-2 block text-sm font-medium">
+              Discord Webhook URL
+            </label>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Post alerts to a Discord channel. In Discord, open the channel settings, choose
+              Integrations, then Webhooks, and copy the webhook URL.{" "}
+              <a
+                href="https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center text-primary hover:underline"
+              >
+                Discord webhook guide
+                <ExternalLink className="ml-1 h-3 w-3" />
+              </a>
+            </p>
+            <div className="flex gap-2">
+              <Input
+                id="discord-webhook"
+                type="url"
+                placeholder="https://discord.com/api/webhooks/..."
+                value={discordWebhook}
+                onChange={(e) => setDiscordWebhook(e.target.value)}
+                className="flex-1 font-mono text-sm"
+              />
+              <Button
+                onClick={testDiscordWebhook}
+                disabled={!discordWebhook || testingDiscord}
+                variant="outline"
+              >
+                {testingDiscord ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <TestTube className="mr-2 h-4 w-4" />
+                )}
+                Test
+              </Button>
+            </div>
+
+            {discordTestSuccess !== null && (
+              <div
+                className={`mt-2 flex items-center text-sm ${discordTestSuccess ? "text-green-600" : "text-red-600"}`}
+              >
+                {discordTestSuccess ? (
+                  <>
+                    <Check className="mr-1 h-4 w-4" />
+                    Test notification sent successfully! Check your Discord channel.
                   </>
                 ) : (
                   <>

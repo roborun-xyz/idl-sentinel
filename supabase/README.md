@@ -1,6 +1,6 @@
 ---
 created_at: 2025-11-08
-updated_at: 2026-10-01
+updated_at: 2026-10-08
 ---
 
 # Supabase Database Setup
@@ -50,7 +50,7 @@ The database consists of the following tables:
 
 - **users**: Authenticated users with wallet addresses
   - Stores wallet addresses, admin status, and notification preferences
-  - Each user can configure Slack and Telegram notifications
+  - Each user can configure Slack, Discord, and Telegram notifications
 
 - **monitored_programs**: Solana programs being monitored
   - Admins create programs directly; signed-in users can activate a new program

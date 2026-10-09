@@ -18,7 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
 const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
 const metadataBase = appUrl && /^https?:\/\//i.test(appUrl) ? new URL(appUrl) : undefined;
 const description =
-  "Monitor Solana program IDLs for changes. IDL Sentinel polls on-chain Anchor and Program Metadata IDLs, keeps every version, classifies diffs by severity, and alerts Slack or Telegram.";
+  "Monitor Solana program IDLs for changes. IDL Sentinel polls on-chain Anchor and Program Metadata IDLs, keeps every version, classifies diffs by severity, and alerts Slack, Discord, or Telegram.";
 
 export const metadata: Metadata = {
   metadataBase,

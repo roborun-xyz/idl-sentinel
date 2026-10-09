@@ -35,8 +35,8 @@ export default function OpenGraphImage() {
           Know when a Solana program&apos;s interface changes.
         </div>
         <div style={{ fontSize: 30, color: "#a3a3a3", lineHeight: 1.4 }}>
-          On-chain IDL polling, versioned snapshots, severity-classified diffs, and Slack or
-          Telegram alerts.
+          On-chain IDL polling, versioned snapshots, severity-classified diffs, and Slack, Discord,
+          or Telegram alerts.
         </div>
       </div>
       <div style={{ display: "flex", gap: 14, fontSize: 24, color: "#a3a3a3" }}>

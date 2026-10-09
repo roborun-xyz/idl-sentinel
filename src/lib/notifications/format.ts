@@ -56,15 +56,19 @@ export function describeChangeCount(changes: NotificationChange[]): string {
   return `${changes.length} changes (${breakdown})`;
 }
 
-/** Latest detection time across the batch, as "YYYY-MM-DD HH:MM:SS UTC". */
-export function formatDetectedAt(changes: NotificationChange[], now = new Date()): string {
+/** Latest detection time across the batch, falling back to `now`. */
+export function latestDetectedAt(changes: NotificationChange[], now = new Date()): Date {
   let latest = Number.NEGATIVE_INFINITY;
   for (const change of changes) {
     const time = Date.parse(change.detected_at);
     if (Number.isFinite(time) && time > latest) latest = time;
   }
-  const date = Number.isFinite(latest) ? new Date(latest) : now;
-  return `${date.toISOString().replace("T", " ").slice(0, 19)} UTC`;
+  return Number.isFinite(latest) ? new Date(latest) : now;
+}
+
+/** Latest detection time across the batch, as "YYYY-MM-DD HH:MM:SS UTC". */
+export function formatDetectedAt(changes: NotificationChange[], now = new Date()): string {
+  return `${latestDetectedAt(changes, now).toISOString().replace("T", " ").slice(0, 19)} UTC`;
 }
 
 export function truncateSummary(summary: string, maxLength = MAX_SUMMARY_LENGTH): string {
@@ -80,4 +84,9 @@ export function escapeHtml(text: string): string {
 /** Slack mrkdwn treats &, <, > as control characters. */
 export function escapeSlackText(text: string): string {
   return escapeHtml(text);
+}
+
+/** Discord renders markdown; escape the characters that would change formatting. */
+export function escapeDiscordMarkdown(text: string): string {
+  return text.replace(/[\\*_~`|>]/g, "\\$&");
 }

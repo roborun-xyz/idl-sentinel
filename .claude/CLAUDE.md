@@ -1,6 +1,6 @@
 ---
 created_at: 2025-12-28
-updated_at: 2026-10-01
+updated_at: 2026-10-08
 ---
 
 # CLAUDE.md
@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-IDL Sentinel is a Next.js application that polls Solana program IDLs (Interface Definition Languages) for changes and sends notifications to users via Telegram and Slack. Admins register programs directly; signed-in users can activate a new shared program through a one-time USDC payment. The app classifies structural changes and notifies subscribed users.
+IDL Sentinel is a Next.js application that polls Solana program IDLs (Interface Definition Languages) for changes and sends notifications to users via Slack, Discord, and Telegram. Admins register programs directly; signed-in users can activate a new shared program through a one-time USDC payment. The app classifies structural changes and notifies subscribed users.
 
 ## Tech Stack
 
@@ -17,7 +17,7 @@ IDL Sentinel is a Next.js application that polls Solana program IDLs (Interface 
 - **Database**: Supabase (PostgreSQL with Row Level Security)
 - **Blockchain**: Solana Web3.js with Anchor legacy and Solana Program Metadata IDL discovery
 - **Authentication**: Wallet-based auth using Solana wallet adapters
-- **Notifications**: Telegram Bot API and Slack webhooks
+- **Notifications**: Slack incoming webhooks, Discord webhooks, and the Telegram Bot API
 - **Styling**: Tailwind CSS with Radix UI components
 
 ## Common Commands
@@ -104,6 +104,9 @@ UPDATE users SET is_admin = true WHERE wallet_address = 'YOUR_WALLET';
      - User-configurable webhook URLs
      - Sends formatted messages with change summaries grouped by severity
      - Notifies only users watching the specific program
+   - **Discord** ([lib/notifications/discord.ts](../src/lib/notifications/discord.ts))
+     - User-configurable webhook URLs, validated against the Discord webhook URL pattern
+     - Sends one embed colored by the highest severity, with fields per severity
    - **Telegram** ([lib/notifications/telegram-user.ts](../src/lib/notifications/telegram-user.ts))
      - Shared bot with per-user chat connections
      - Uses connection tokens for authentication flow
@@ -234,7 +237,7 @@ Environment configuration (see [.env.example](../.env.example) and payment setti
 - `CRON_SECRET`: Secret for protecting cron endpoints
 - `TELEGRAM_BOT_TOKEN`: Required for Telegram notifications; bot token from @BotFather
 - `TELEGRAM_BOT_USERNAME`: Required for Telegram connections; bot username without @
-- `NEXT_PUBLIC_APP_URL`: App URL for Telegram connection links
+- `NEXT_PUBLIC_APP_URL`: App URL for Telegram connection links, alert deep links, and metadata
 
 ## Database Setup
 
@@ -298,6 +301,7 @@ Changes have separate notification flags for each channel:
 
 - `slack_notified` / `slack_notified_at`
 - `telegram_user_notified` / `telegram_user_notified_at`
+- `discord_notified` / `discord_notified_at`
 
 These flags are supplemented by per-channel retry timestamps and
 `notification_deliveries` receipts. The notification workers use per-channel
@@ -337,7 +341,7 @@ src/
     ├── auth/             # Authentication logic
     ├── db/               # Database operations
     ├── monitoring/       # IDL monitoring & change detection
-    ├── notifications/    # Slack & Telegram notifications
+    ├── notifications/    # Slack, Discord & Telegram notifications
     ├── solana/           # Solana/Anchor IDL fetching
     ├── telegram/         # Telegram bot utilities
     └── supabase.ts       # Supabase clients & types

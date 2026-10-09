@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     wallet_address TEXT NOT NULL UNIQUE,
     is_admin BOOLEAN DEFAULT false,
     slack_webhook_url TEXT,
+    discord_webhook_url TEXT,
     telegram_chat_id TEXT,
     telegram_username TEXT,
     preferred_explorer TEXT DEFAULT 'explorer.solana.com' CHECK (preferred_explorer IN ('explorer.solana.com', 'solscan.io')),
@@ -34,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_users_telegram_configured ON users(id)
 COMMENT ON TABLE users IS 'Authenticated users with wallet addresses';
 COMMENT ON COLUMN users.is_admin IS 'Flag indicating if user has admin privileges';
 COMMENT ON COLUMN users.slack_webhook_url IS 'User-specific Slack webhook URL for change notifications';
+COMMENT ON COLUMN users.discord_webhook_url IS 'User-specific Discord webhook URL for change notifications';
 COMMENT ON COLUMN users.telegram_chat_id IS 'User-specific Telegram chat ID for notifications';
 COMMENT ON COLUMN users.telegram_username IS 'Telegram username for better UX';
 COMMENT ON COLUMN users.preferred_explorer IS 'Preferred Solana explorer (explorer.solana.com or solscan.io)';
@@ -103,6 +105,8 @@ CREATE TABLE IF NOT EXISTS idl_changes (
     slack_notified_at TIMESTAMPTZ,
     telegram_user_notified BOOLEAN DEFAULT false,
     telegram_user_notified_at TIMESTAMPTZ,
+    discord_notified BOOLEAN NOT NULL DEFAULT false,
+    discord_notified_at TIMESTAMPTZ,
     detected_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -128,6 +132,7 @@ COMMENT ON COLUMN idl_changes.severity IS 'Impact level: low, medium, high, or c
 COMMENT ON COLUMN idl_changes.notified IS 'Legacy notification flag';
 COMMENT ON COLUMN idl_changes.slack_notified IS 'Flag indicating if Slack notifications have been sent';
 COMMENT ON COLUMN idl_changes.telegram_user_notified IS 'Flag indicating if Telegram notifications have been sent';
+COMMENT ON COLUMN idl_changes.discord_notified IS 'Flag indicating if Discord notifications have been sent';
 
 -- =====================================================
 -- NOTIFICATION DELIVERIES TABLE
@@ -137,7 +142,7 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     change_id UUID NOT NULL REFERENCES idl_changes(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    channel TEXT NOT NULL CHECK (channel IN ('slack', 'telegram_user')),
+    channel TEXT NOT NULL CHECK (channel IN ('slack', 'telegram_user', 'discord')),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered', 'failed')),
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
@@ -157,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_pending ON notification_d
 
 -- Comments
 COMMENT ON TABLE notification_deliveries IS 'Per-user notification delivery receipts for retry-safe change notifications';
-COMMENT ON COLUMN notification_deliveries.channel IS 'Notification channel: slack or telegram_user';
+COMMENT ON COLUMN notification_deliveries.channel IS 'Notification channel: slack, telegram_user, or discord';
 COMMENT ON COLUMN notification_deliveries.status IS 'Delivery status for this user/change/channel';
 
 -- =====================================================
@@ -389,6 +394,25 @@ ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS slack_retry_at TIMESTAMPTZ NOT 
 ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS telegram_user_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 CREATE INDEX IF NOT EXISTS idx_changes_slack_due ON idl_changes(slack_retry_at, detected_at, id) WHERE NOT slack_notified;
 CREATE INDEX IF NOT EXISTS idx_changes_telegram_due ON idl_changes(telegram_user_retry_at, detected_at, id) WHERE NOT telegram_user_notified;
+
+-- Discord webhooks are a third notification channel. Changes that predate the
+-- column are marked delivered so a newly connected webhook is not flooded.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_webhook_url TEXT;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'idl_changes' AND column_name = 'discord_notified') THEN
+        ALTER TABLE idl_changes ADD COLUMN discord_notified BOOLEAN NOT NULL DEFAULT true;
+        ALTER TABLE idl_changes ALTER COLUMN discord_notified SET DEFAULT false;
+    END IF;
+END;
+$$;
+ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS discord_notified_at TIMESTAMPTZ;
+ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS discord_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_changes_discord_due ON idl_changes(discord_retry_at, detected_at, id) WHERE NOT discord_notified;
+ALTER TABLE notification_deliveries DROP CONSTRAINT IF EXISTS notification_deliveries_channel_check;
+ALTER TABLE notification_deliveries ADD CONSTRAINT notification_deliveries_channel_check
+    CHECK (channel IN ('slack', 'telegram_user', 'discord'));
 
 CREATE TABLE IF NOT EXISTS auth_nonces (
     wallet_address TEXT PRIMARY KEY,

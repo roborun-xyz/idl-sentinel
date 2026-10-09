@@ -14,6 +14,25 @@ ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS telegram_user_retry_at TIMESTAM
 CREATE INDEX IF NOT EXISTS idx_changes_slack_due ON idl_changes(slack_retry_at, detected_at, id) WHERE NOT slack_notified;
 CREATE INDEX IF NOT EXISTS idx_changes_telegram_due ON idl_changes(telegram_user_retry_at, detected_at, id) WHERE NOT telegram_user_notified;
 
+-- Discord webhooks are a third notification channel. Changes that predate the
+-- column are marked delivered so a newly connected webhook is not flooded.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_webhook_url TEXT;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'idl_changes' AND column_name = 'discord_notified') THEN
+        ALTER TABLE idl_changes ADD COLUMN discord_notified BOOLEAN NOT NULL DEFAULT true;
+        ALTER TABLE idl_changes ALTER COLUMN discord_notified SET DEFAULT false;
+    END IF;
+END;
+$$;
+ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS discord_notified_at TIMESTAMPTZ;
+ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS discord_retry_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_changes_discord_due ON idl_changes(discord_retry_at, detected_at, id) WHERE NOT discord_notified;
+ALTER TABLE notification_deliveries DROP CONSTRAINT IF EXISTS notification_deliveries_channel_check;
+ALTER TABLE notification_deliveries ADD CONSTRAINT notification_deliveries_channel_check
+    CHECK (channel IN ('slack', 'telegram_user', 'discord'));
+
 CREATE TABLE IF NOT EXISTS auth_nonces (
     wallet_address TEXT PRIMARY KEY,
     nonce TEXT NOT NULL,

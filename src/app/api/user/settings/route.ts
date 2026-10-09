@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthUser } from "@/lib/auth/middleware";
 import { supabaseAdmin } from "@/lib/supabase";
 import { testSlackWebhook } from "@/lib/notifications/slack";
+import { isDiscordWebhookUrl, testDiscordWebhook } from "@/lib/notifications/discord";
 
 // Get user settings
 export async function GET(request: NextRequest) {
@@ -14,7 +15,7 @@ export async function GET(request: NextRequest) {
     const { data, error } = await supabaseAdmin
       .from("users")
       .select(
-        "wallet_address, slack_webhook_url, telegram_chat_id, telegram_username, preferred_explorer, is_admin, created_at, last_login_at"
+        "wallet_address, slack_webhook_url, discord_webhook_url, telegram_chat_id, telegram_username, preferred_explorer, is_admin, created_at, last_login_at"
       )
       .eq("id", user.userId)
       .single();
@@ -39,10 +40,11 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { slack_webhook_url, telegram_chat_id, preferred_explorer } = body;
+    const { slack_webhook_url, discord_webhook_url, telegram_chat_id, preferred_explorer } = body;
 
     const updates: {
       slack_webhook_url?: string | null;
+      discord_webhook_url?: string | null;
       telegram_chat_id?: null;
       telegram_username?: null;
       preferred_explorer?: string;
@@ -57,6 +59,21 @@ export async function PUT(request: NextRequest) {
         updates.slack_webhook_url = slack_webhook_url;
       } else {
         updates.slack_webhook_url = null;
+      }
+    }
+
+    // Handle Discord webhook
+    if (discord_webhook_url !== undefined) {
+      if (discord_webhook_url !== null && discord_webhook_url !== "") {
+        if (typeof discord_webhook_url !== "string" || !isDiscordWebhookUrl(discord_webhook_url)) {
+          return NextResponse.json(
+            { error: "Invalid Discord webhook URL format" },
+            { status: 400 }
+          );
+        }
+        updates.discord_webhook_url = discord_webhook_url.trim();
+      } else {
+        updates.discord_webhook_url = null;
       }
     }
 
@@ -115,7 +132,26 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { slack_webhook_url, test_type } = body;
+    const { slack_webhook_url, discord_webhook_url, test_type } = body;
+
+    // Test Discord
+    if (test_type === "discord") {
+      if (typeof discord_webhook_url !== "string" || !isDiscordWebhookUrl(discord_webhook_url)) {
+        return NextResponse.json({ error: "Invalid Discord webhook URL format" }, { status: 400 });
+      }
+
+      const success = await testDiscordWebhook(discord_webhook_url.trim());
+      if (success) {
+        return NextResponse.json({
+          success: true,
+          message: "Discord test notification sent successfully",
+        });
+      }
+      return NextResponse.json(
+        { error: "Failed to send Discord test notification" },
+        { status: 500 }
+      );
+    }
 
     // Test Slack
     if (test_type === "slack" || slack_webhook_url) {

@@ -1,6 +1,6 @@
 ---
 created_at: 2025-11-02
-updated_at: 2026-10-01
+updated_at: 2026-10-08
 ---
 
 # IDL Sentinel
@@ -26,7 +26,7 @@ published interface changes.
 - Stores every new IDL snapshot in Supabase.
 - Compares snapshots and records low, medium, high, or critical changes.
 - Alerts only users who have the changed program in their watchlist.
-- Supports Slack incoming webhooks and Telegram bot notifications.
+- Supports Slack incoming webhooks, Discord webhooks, and Telegram bot notifications.
 - Lets admins add programs directly.
 - Lets regular users activate a new shared program by paying a one-time USDC fee.
 
@@ -37,7 +37,7 @@ published interface changes.
 3. A cron job calls `/api/cron/monitor-idls`, usually every 15 minutes.
 4. The monitor fetches each active program IDL and hashes the normalized JSON.
 5. When the hash changes, IDL Sentinel creates a new snapshot and records the diff.
-6. Slack and Telegram notifications are sent to users watching that program.
+6. Slack, Discord, and Telegram notifications are sent to users watching that program.
 
 IDL Sentinel needs a discoverable Anchor or Program Metadata IDL to capture an
 initial snapshot. The paid activation flow requires one before creating a payment
@@ -109,8 +109,8 @@ Required for Telegram notifications:
 | `TELEGRAM_BOT_TOKEN`    | Bot token from BotFather |
 | `TELEGRAM_BOT_USERNAME` | Bot username without `@` |
 
-Slack does not require a global app secret. Each user stores their own Slack
-incoming webhook URL in Settings.
+Slack and Discord do not require global app secrets. Each user stores their own
+incoming webhook URLs in Settings.
 
 ### 3. Create the Database
 
@@ -201,7 +201,7 @@ and revokes direct Data API access for anonymous/authenticated roles. Browser
 clients use the Next.js APIs; the service-role key remains server-side.
 
 `pnpm test` runs local PostgreSQL (PGlite) and application regression tests.
-It does not contact Supabase, Solana, Slack, or Telegram. Existing missed alerts
+It does not contact Supabase, Solana, Slack, Discord, or Telegram. Existing missed alerts
 are not reconstructed by the upgrade.
 
 ## Monitoring Cron
@@ -238,7 +238,7 @@ Each run:
 - fetches active program IDLs,
 - creates new snapshots when IDLs change,
 - records detected changes,
-- sends pending Slack and Telegram notifications,
+- sends pending Slack, Discord, and Telegram notifications,
 - cleans up expired Telegram connection tokens.
 
 ## Notifications
@@ -250,13 +250,22 @@ Notifications are watchlist-based. A user receives an alert only when:
 3. a detected change is pending delivery for that channel and recipient.
 
 Signing in is required to manage subscriptions and settings. Users do not need
-an active browser session to receive alerts.
+an active browser session to receive alerts. Alerts link back to the program page
+when `NEXT_PUBLIC_APP_URL` is an absolute `https://` URL.
 
 ### Slack
 
 Each user configures Slack from Settings by pasting an incoming webhook URL. The
 app accepts webhook URLs beginning with `https://hooks.slack.com/` and includes a
 test button.
+
+### Discord
+
+Each user configures Discord from Settings by pasting a channel webhook URL
+(Channel settings, Integrations, Webhooks). The app accepts URLs beginning with
+`https://discord.com/api/webhooks/` or `https://discordapp.com/api/webhooks/`
+and includes a test button. Alerts arrive as a single embed, colored by the
+highest severity, with a link to the program page.
 
 ### Telegram
 
@@ -288,7 +297,7 @@ Telegram connection links expire after 10 minutes.
 
 - View active monitored programs.
 - Add or remove programs from their watchlist.
-- Configure Slack and Telegram notifications.
+- Configure Slack, Discord, and Telegram notifications.
 - Add a new shared program through the USDC activation flow.
 - Edit or delete programs they activated.
 
@@ -329,7 +338,7 @@ pnpm format:check
 src/app/api/cron/monitor-idls/  Monitoring cron endpoint
 src/lib/solana/idl-fetcher.ts   On-chain IDL discovery and parsing
 src/lib/monitoring/             Snapshot comparison and change detection
-src/lib/notifications/          Slack and Telegram delivery
+src/lib/notifications/          Slack, Discord, and Telegram delivery
 src/lib/auth/                   Wallet signature auth and JWT sessions
 src/lib/db/                     Supabase data access helpers
 supabase/schema.sql             Database source of truth
@@ -362,8 +371,8 @@ Authorization: Bearer <CRON_SECRET>
 
 ### No notifications are sent
 
-Check that the program is in the user's watchlist, the user configured Slack or
-Telegram, the cron endpoint is running, and there is at least one pending change
+Check that the program is in the user's watchlist, the user configured Slack,
+Discord, or Telegram, the cron endpoint is running, and there is at least one pending change
 for that watched program.
 
 ### Payment activation fails

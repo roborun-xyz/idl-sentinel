@@ -8,11 +8,18 @@ interface WatcherRow {
     id: string;
     wallet_address: string;
     slack_webhook_url: string | null;
+    discord_webhook_url: string | null;
     telegram_chat_id: string | null;
   };
 }
 
-export type NotificationChannel = "slack" | "telegram_user";
+export type NotificationChannel = "slack" | "telegram_user" | "discord";
+
+const destinationField: Record<NotificationChannel, keyof WatcherRow["users"]> = {
+  slack: "slack_webhook_url",
+  telegram_user: "telegram_chat_id",
+  discord: "discord_webhook_url",
+};
 
 // Always walk a stable cursor: no dependence on the Data API's response row cap.
 async function allRows<T extends { id: string }>(
@@ -36,7 +43,7 @@ export function notificationStore(
   const checkDeadline = () => {
     if (Date.now() >= deadline) throw new Error("Notification query deadline exceeded");
   };
-  const field = channel === "slack" ? "slack_webhook_url" : "telegram_chat_id";
+  const field = destinationField[channel];
   return {
     async loadChanges() {
       const { data, error } = await supabaseAdmin
@@ -60,7 +67,7 @@ export function notificationStore(
           let query = supabaseAdmin
             .from("user_watchlist")
             .select(
-              "id, program_id, users!inner(id, wallet_address, slack_webhook_url, telegram_chat_id)"
+              "id, program_id, users!inner(id, wallet_address, slack_webhook_url, discord_webhook_url, telegram_chat_id)"
             )
             .in("program_id", programIds.slice(i, i + 50))
             .not(`users.${field}`, "is", null)
@@ -75,7 +82,7 @@ export function notificationStore(
           watchers.push({
             userId: row.users.id,
             walletAddress: row.users.wallet_address,
-            destination: row.users[field]!,
+            destination: row.users[field] as string,
           });
           result.set(row.program_id, watchers);
         }

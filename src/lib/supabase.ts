@@ -49,6 +49,8 @@ export interface IdlChange {
   slack_notified_at?: string;
   telegram_user_notified?: boolean;
   telegram_user_notified_at?: string;
+  discord_notified?: boolean;
+  discord_notified_at?: string;
   detected_at: string;
 }
 
@@ -56,7 +58,7 @@ export interface NotificationDelivery {
   id: string;
   change_id: string;
   user_id: string;
-  channel: "slack" | "telegram_user";
+  channel: "slack" | "telegram_user" | "discord";
   status: "pending" | "delivered" | "failed";
   attempts: number;
   last_error?: string | null;
@@ -89,6 +91,7 @@ export interface User {
   wallet_address: string;
   is_admin: boolean;
   slack_webhook_url?: string | null;
+  discord_webhook_url?: string | null;
   telegram_chat_id?: string | null;
   telegram_username?: string | null;
   created_at: string;

@@ -1,6 +1,7 @@
 import { acquireCronLock, releaseCronLock } from "./lock";
 import { sendWatchlistNotifications } from "../notifications/slack";
 import { sendTelegramWatchlistNotifications } from "../notifications/telegram-user";
+import { sendDiscordWatchlistNotifications } from "../notifications/discord";
 
 export async function runNotificationJobs(deadline = Date.now() + 45_000) {
   async function channel(
@@ -18,9 +19,10 @@ export async function runNotificationJobs(deadline = Date.now() + 45_000) {
       await releaseCronLock(name, runId);
     }
   }
-  const [slack, telegram_user] = await Promise.all([
+  const [slack, telegram_user, discord] = await Promise.all([
     channel("notify-slack", sendWatchlistNotifications),
     channel("notify-telegram", sendTelegramWatchlistNotifications),
+    channel("notify-discord", sendDiscordWatchlistNotifications),
   ]);
-  return { slack, telegram_user };
+  return { slack, telegram_user, discord };
 }

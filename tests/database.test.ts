@@ -54,6 +54,76 @@ test("upgrade stays in sync with canonical schema and is repeatable", async () =
   await db.exec(upgrade);
 });
 
+test("discord upgrade backfills existing changes and accepts discord receipts", async () => {
+  const legacy = new PGlite({ extensions: { uuid_ossp } });
+  try {
+    await legacy.exec("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;");
+    // Simulate an installation that predates the Discord channel.
+    const legacySchema = schema
+      .replace("    discord_webhook_url TEXT,\n", "")
+      .replace(
+        "    discord_notified BOOLEAN NOT NULL DEFAULT false,\n    discord_notified_at TIMESTAMPTZ,\n",
+        ""
+      )
+      .replace(
+        "CHECK (channel IN ('slack', 'telegram_user', 'discord')),",
+        "CHECK (channel IN ('slack', 'telegram_user')),"
+      )
+      .slice(0, schema.indexOf("-- Apply before deploying"))
+      .split("\n")
+      .filter((line) => !(line.startsWith("COMMENT ON") && line.includes("discord")))
+      .join("\n");
+    assert.ok(!legacySchema.includes("discord"));
+    await legacy.exec(legacySchema);
+    const id = randomUUID();
+    await legacy.query("INSERT INTO monitored_programs(id, program_id, name) VALUES($1, $2, $3)", [
+      id,
+      id,
+      "Legacy",
+    ]);
+    const snapshot = await legacy.query<{ id: string }>(
+      "INSERT INTO idl_snapshots(program_id, idl_hash, idl_content, version_number) VALUES($1, 'A', '{}', 1) RETURNING id",
+      [id]
+    );
+    const insertChange = (summary: string) =>
+      legacy.query(
+        "INSERT INTO idl_changes(program_id, new_snapshot_id, change_type, change_summary, change_details, severity) VALUES($1, $2, 'type_added', $3, '{}', 'low')",
+        [id, snapshot.rows[0].id, summary]
+      );
+    await insertChange("old");
+    await legacy.exec(upgrade);
+    await legacy.exec(upgrade);
+    await insertChange("new");
+    const rows = await legacy.query<{ change_summary: string; discord_notified: boolean }>(
+      "SELECT change_summary, discord_notified FROM idl_changes WHERE program_id = $1 ORDER BY change_summary DESC",
+      [id]
+    );
+    assert.deepEqual(rows.rows, [
+      { change_summary: "old", discord_notified: true },
+      { change_summary: "new", discord_notified: false },
+    ]);
+    const user = await legacy.query<{ id: string }>(
+      "INSERT INTO users(wallet_address, discord_webhook_url) VALUES('w', 'https://discord.com/api/webhooks/1/a') RETURNING id"
+    );
+    const change = await legacy.query<{ id: string }>(
+      "SELECT id FROM idl_changes WHERE change_summary = 'new'"
+    );
+    await legacy.query(
+      "SELECT record_notification_delivery('discord', $1, ARRAY[$2]::uuid[], 'delivered')",
+      [user.rows[0].id, change.rows[0].id]
+    );
+    await assert.rejects(
+      legacy.query(
+        "SELECT record_notification_delivery('email', $1, ARRAY[$2]::uuid[], 'delivered')",
+        [user.rows[0].id, change.rows[0].id]
+      ),
+      /violates check constraint/
+    );
+  } finally {
+    await legacy.close();
+  }
+});
+
 test("A -> B -> A and missing -> restored preserve every transition", async () => {
   const id = await program();
   let previous: string | null = null;
@@ -103,6 +173,7 @@ test("anonymous/authenticated roles cannot read secrets, create admins, or write
     try {
       for (const query of [
         "SELECT slack_webhook_url FROM users",
+        "SELECT discord_webhook_url FROM users",
         "INSERT INTO users(wallet_address, is_admin) VALUES('attacker', true)",
         "DELETE FROM idl_snapshots",
         "DELETE FROM idl_changes",

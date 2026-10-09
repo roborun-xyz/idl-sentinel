@@ -15,6 +15,7 @@ const channels = () =>
   Promise.all([
     import("../src/lib/notifications/slack"),
     import("../src/lib/notifications/telegram-user"),
+    import("../src/lib/notifications/discord"),
   ]);
 
 const program = {
@@ -125,4 +126,49 @@ test("Telegram messages use HTML, escape user content, and stay under the API li
   const trimmed = formatTelegramMessage(program.name, program.program_id, huge, url);
   assert.ok(trimmed.length <= 4096);
   assert.ok(trimmed.includes("omitted"));
+});
+
+test("Discord payloads use one embed with severity fields, escaped markdown, and a link", async () => {
+  const [, , { formatDiscordMessage, isDiscordWebhookUrl }] = await channels();
+  const url = "https://idl-sentinel.example.com/programs/db-id-1";
+  const changes = [
+    change({
+      severity: "high",
+      change_summary: "Instruction 'create_idempotent_ata' modified: *x*",
+    }),
+    change({ severity: "critical", change_summary: "Instruction 'close' removed" }),
+  ];
+  const payload = formatDiscordMessage(
+    "Jupiter_v6",
+    program.program_id,
+    changes,
+    url
+  ) as unknown as {
+    embeds: Array<{
+      title: string;
+      url?: string;
+      color: number;
+      fields: Array<{ name: string; value: string }>;
+      timestamp: string;
+    }>;
+    allowed_mentions: { parse: string[] };
+  };
+  const [embed] = payload.embeds;
+  assert.equal(embed.url, url);
+  assert.equal(embed.color, 0xef4444);
+  assert.ok(embed.title.startsWith("🔴 Jupiter\\_v6: 2 changes (1 critical, 1 high)"));
+  assert.deepEqual(
+    embed.fields.map((field) => field.name),
+    ["🔴 Critical (1)", "🟠 High (1)"]
+  );
+  assert.ok(embed.fields[1].value.includes("create\\_idempotent\\_ata"));
+  assert.ok(embed.fields[1].value.includes("\\*x\\*"));
+  assert.equal(embed.timestamp, "2026-10-08T10:00:00.000Z");
+  assert.deepEqual(payload.allowed_mentions.parse, []);
+  for (const field of embed.fields) assert.ok(field.value.length <= 1024);
+
+  assert.ok(isDiscordWebhookUrl("https://discord.com/api/webhooks/123/abc_DEF-ghi"));
+  assert.ok(isDiscordWebhookUrl("https://discordapp.com/api/webhooks/123/abc"));
+  assert.ok(!isDiscordWebhookUrl("https://hooks.slack.com/services/x"));
+  assert.ok(!isDiscordWebhookUrl("https://discord.com/api/webhooks/123/abc?x=<script>"));
 });

@@ -30,8 +30,8 @@ export function Hero() {
       </h1>
       <p className="mx-auto max-w-2xl px-2 text-base text-muted-foreground sm:text-lg">
         IDL Sentinel polls on-chain Anchor and Program Metadata IDLs every {POLL_INTERVAL_MINUTES}{" "}
-        minutes, keeps every version, classifies the diff by severity, and alerts your Slack or
-        Telegram when instructions, accounts, types, or errors change.
+        minutes, keeps every version, classifies the diff by severity, and alerts your Slack,
+        Discord, or Telegram when instructions, accounts, types, or errors change.
       </p>
       <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
         <Button asChild size="lg">
@@ -60,7 +60,7 @@ const steps = [
   {
     icon: Eye,
     title: "Watch it",
-    body: "Add the program to your watchlist and connect Slack or Telegram from Settings. Watching an already-registered program is free.",
+    body: "Add the program to your watchlist and connect Slack, Discord, or Telegram from Settings. Watching an already-registered program is free.",
   },
   {
     icon: BellRing,
