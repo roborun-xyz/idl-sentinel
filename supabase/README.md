@@ -113,6 +113,8 @@ in the Supabase SQL Editor, deploy the matching application release, then resume
 the schedules. This transactional, repeatable upgrade is also included verbatim
 in `schema.sql`. It preserves existing rows, permits rollback versions, and adds
 atomic transition/nonce operations and bounded list/aggregate RPCs.
+It also adds the Discord notification channel; changes recorded before the
+upgrade are marked as already delivered for Discord so new webhooks start clean.
 
 All application tables and RPCs are restricted to `service_role`. Wallet JWTs
 are verified by Next.js and do not establish Supabase Auth sessions. Public data
