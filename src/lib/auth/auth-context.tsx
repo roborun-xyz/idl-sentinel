@@ -53,7 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const readSession = useCallback(
     async (expectedWallet: string | null, requestGeneration: string) => {
       const response = await fetch("/api/auth/me", { cache: "no-store" });
-      const next: Session | null = response.ok ? await response.json() : null;
+      const next: Session | null =
+        response.ok && response.status !== 204 ? await response.json() : null;
       if (generation.current !== requestGeneration) return;
       if (next && expectedWallet && next.walletAddress !== expectedWallet) {
         await fetch("/api/auth/signout", { method: "POST" });
