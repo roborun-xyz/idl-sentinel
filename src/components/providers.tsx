@@ -1,10 +1,10 @@
-'use client'
+"use client";
 
-import { ReactNode } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ThemeProvider } from '@/lib/theme/theme-provider'
-import { WalletContextProvider } from './wallet/wallet-provider'
-import { AuthProvider } from '@/lib/auth/auth-context'
+import { ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "@/lib/theme/theme-provider";
+import { WalletContextProvider } from "./wallet/wallet-provider";
+import { AuthProvider } from "@/lib/auth/auth-context";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -20,31 +20,29 @@ function makeQueryClient() {
         retry: 1,
       },
     },
-  })
+  });
 }
 
-let browserQueryClient: QueryClient | undefined = undefined
+let browserQueryClient: QueryClient | undefined = undefined;
 
 function getQueryClient() {
-  if (typeof window === 'undefined') {
-    return makeQueryClient()
+  if (typeof window === "undefined") {
+    return makeQueryClient();
   }
-  if (!browserQueryClient) browserQueryClient = makeQueryClient()
-  return browserQueryClient
+  if (!browserQueryClient) browserQueryClient = makeQueryClient();
+  return browserQueryClient;
 }
 
 export function Providers({ children }: { children: ReactNode }) {
-  const queryClient = getQueryClient()
+  const queryClient = getQueryClient();
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <WalletContextProvider>
-          <AuthProvider>
-            {children}
-          </AuthProvider>
+          <AuthProvider>{children}</AuthProvider>
         </WalletContextProvider>
       </ThemeProvider>
     </QueryClientProvider>
-  )
+  );
 }

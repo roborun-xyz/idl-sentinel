@@ -1,16 +1,16 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth/middleware'
+import { NextRequest, NextResponse } from "next/server";
+import { getAuthUser } from "@/lib/auth/middleware";
 
 // Debug endpoint to check JWT contents
 export async function GET(request: NextRequest) {
   try {
-    const user = await getAuthUser(request)
+    const user = await getAuthUser(request);
 
     if (!user) {
       return NextResponse.json({
         authenticated: false,
-        message: 'No valid JWT token found'
-      })
+        message: "No valid JWT token found",
+      });
     }
 
     return NextResponse.json({
@@ -18,15 +18,15 @@ export async function GET(request: NextRequest) {
       walletAddress: user.walletAddress,
       userId: user.userId,
       isAdmin: user.isAdmin,
-      message: 'JWT decoded successfully'
-    })
+      message: "JWT decoded successfully",
+    });
   } catch (error) {
     return NextResponse.json(
       {
         authenticated: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
-    )
+    );
   }
 }
