@@ -10,8 +10,8 @@ export function StatsCards() {
 
   if (isLoading) {
     return (
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {[...Array(4)].map((_, i) => (
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {[...Array(3)].map((_, i) => (
           <Card key={i}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -53,12 +53,6 @@ export function StatsCards() {
       subtitle: `${stats.activePrograms ?? 0} active`,
       icon: Blocks,
     },
-    // {
-    //   title: "Active Programs",
-    //   value: stats.activePrograms ?? 0,
-    //   subtitle: "Currently monitored",
-    //   icon: CheckCircle,
-    // },
     {
       title: "Total Changes",
       value: stats.totalChanges ?? 0,

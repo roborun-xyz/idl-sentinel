@@ -15,9 +15,31 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains-mono",
 });
 
+const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+const metadataBase = appUrl && /^https?:\/\//i.test(appUrl) ? new URL(appUrl) : undefined;
+const description =
+  "Monitor Solana program IDLs for changes. IDL Sentinel polls on-chain Anchor and Program Metadata IDLs, keeps every version, classifies diffs by severity, and alerts Slack or Telegram.";
+
 export const metadata: Metadata = {
-  title: "IDL Sentinel",
-  description: "Monitor Solana program IDL changes in real-time",
+  metadataBase,
+  title: {
+    default: "IDL Sentinel",
+    template: "%s · IDL Sentinel",
+  },
+  description,
+  applicationName: "IDL Sentinel",
+  keywords: ["Solana", "IDL", "Anchor", "program monitoring", "interface changes", "alerts"],
+  openGraph: {
+    type: "website",
+    siteName: "IDL Sentinel",
+    title: "IDL Sentinel",
+    description,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "IDL Sentinel",
+    description,
+  },
 };
 
 export default function RootLayout({
