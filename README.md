@@ -380,3 +380,7 @@ for that watched program.
 Confirm `PAYMENT_TREASURY_USDC_ACCOUNT` is a valid USDC token account, the payer
 has a USDC token account with enough balance, and both client and server RPC URLs
 point to the intended Solana network.
+
+## License
+
+IDL Sentinel is released under the [MIT License](LICENSE).

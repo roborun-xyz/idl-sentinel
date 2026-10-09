@@ -7,7 +7,18 @@ export function Footer() {
     <footer className="border-t border-slate-200 bg-white/50 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/50">
       <div className="page-container py-6">
         <div className="flex flex-col items-center justify-between gap-3 text-center text-sm text-slate-600 dark:text-slate-400 sm:flex-row">
-          <span>© {new Date().getFullYear()} IDL Sentinel. All rights reserved.</span>
+          <span>
+            © {new Date().getFullYear()} IDL Sentinel. Open source under the{" "}
+            <a
+              href="https://github.com/roborun-xyz/idl-sentinel/blob/main/LICENSE"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline-offset-4 hover:text-foreground hover:underline"
+            >
+              MIT License
+            </a>
+            .
+          </span>
           <RepositoryLink className="inline-flex items-center gap-2 underline-offset-4 transition-colors hover:text-foreground hover:underline">
             GitHub
           </RepositoryLink>
