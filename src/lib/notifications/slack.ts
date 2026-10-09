@@ -1,6 +1,18 @@
 import { notificationStore } from "./delivery";
 import { runNotificationBatch, type NotificationChange } from "./worker";
 import { fetchWithTimeout } from "../http";
+import {
+  SEVERITY_EMOJI,
+  MAX_CHANGES_PER_SEVERITY,
+  capitalize,
+  describeChangeCount,
+  escapeSlackText,
+  formatDetectedAt,
+  getProgramUrl,
+  groupBySeverity,
+  highestSeverity,
+  truncateSummary,
+} from "./format";
 
 const SLACK_WEBHOOK_TIMEOUT_MS = 10_000;
 
@@ -47,82 +59,72 @@ export async function sendSlackNotification(
 export function formatSlackMessage(
   programName: string,
   programId: string,
-  changes: NotificationChange[]
+  changes: NotificationChange[],
+  programUrl: string | null = changes[0] ? getProgramUrl(changes[0].monitored_programs.id) : null
 ) {
+  const safeName = escapeSlackText(programName);
   if (changes.length === 0) {
     return {
-      text: `🔍 IDL Sentinel - No changes detected for program *${programName}*`,
+      text: `IDL Sentinel: no changes detected for ${safeName}`,
     };
   }
 
-  // Group changes by severity
-  const changesBySeverity = {
-    critical: changes.filter((c) => c.severity === "critical"),
-    high: changes.filter((c) => c.severity === "high"),
-    medium: changes.filter((c) => c.severity === "medium"),
-    low: changes.filter((c) => c.severity === "low"),
-  };
+  const severity = highestSeverity(changes);
+  const summary = describeChangeCount(changes);
+  const programLabel = programUrl ? `<${programUrl}|${safeName}>` : safeName;
 
   const blocks: Array<Record<string, unknown>> = [
     {
       type: "header",
       text: {
         type: "plain_text",
-        text: "🚨 IDL Sentinel - Changes Detected",
+        text: `${SEVERITY_EMOJI[severity]} IDL change: ${programName}`.slice(0, 150),
         emoji: true,
       },
     },
     {
       type: "section",
       fields: [
-        {
-          type: "mrkdwn",
-          text: `*Program:*\n${programName}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Total Changes:*\n${changes.length}`,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Address:*\n\`${programId}\``,
-        },
-        {
-          type: "mrkdwn",
-          text: `*Detected:*\n${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
-        },
+        { type: "mrkdwn", text: `*Program:*\n${programLabel}` },
+        { type: "mrkdwn", text: `*Changes:*\n${summary}` },
+        { type: "mrkdwn", text: `*Address:*\n\`${programId}\`` },
+        { type: "mrkdwn", text: `*Detected:*\n${formatDetectedAt(changes)}` },
       ],
     },
-    {
-      type: "divider",
-    },
+    { type: "divider" },
   ];
 
-  // Add changes by severity
-  for (const [severity, severityChanges] of Object.entries(changesBySeverity)) {
-    if (severityChanges.length === 0) continue;
-
-    const severityTitle = severity.charAt(0).toUpperCase() + severity.slice(1);
-
-    const changesList = severityChanges
-      .slice(0, 5)
-      .map((change) => `• ${change.change_summary}`)
-      .join("\n");
-
-    const moreText =
-      severityChanges.length > 5 ? `\n• ... and ${severityChanges.length - 5} more` : "";
+  for (const group of groupBySeverity(changes)) {
+    const lines = group.changes
+      .slice(0, MAX_CHANGES_PER_SEVERITY)
+      .map((change) => `• ${escapeSlackText(truncateSummary(change.change_summary))}`);
+    const remaining = group.changes.length - MAX_CHANGES_PER_SEVERITY;
+    if (remaining > 0) lines.push(`• … and ${remaining} more`);
 
     blocks.push({
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*${severityTitle} (${severityChanges.length})*\n${changesList}${moreText}`,
+        text: `*${SEVERITY_EMOJI[group.severity]} ${capitalize(group.severity)} (${group.changes.length})*\n${lines.join("\n")}`,
       },
     });
   }
 
+  if (programUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "View diff in IDL Sentinel", emoji: true },
+          url: programUrl,
+        },
+      ],
+    });
+  }
+
   return {
-    text: `🚨 IDL Sentinel - Changes detected for ${programName}`,
+    text: `${SEVERITY_EMOJI[severity]} IDL Sentinel: ${summary} for ${programName} (${programId})`,
     blocks,
   };
 }
@@ -161,7 +163,7 @@ export async function testSlackWebhook(webhookUrl: string): Promise<boolean> {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `This is a test notification to verify your Slack webhook configuration.\n\n*Sent:* ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
+            text: `Your Slack webhook is connected. IDL change alerts for programs in your watchlist will arrive in this channel.\n\n*Sent:* ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
           },
         },
       ],

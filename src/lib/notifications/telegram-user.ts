@@ -1,6 +1,18 @@
 import { notificationStore } from "./delivery";
 import { runNotificationBatch, createSendLimiter, type NotificationChange } from "./worker";
 import { fetchWithTimeout } from "../http";
+import {
+  SEVERITY_EMOJI,
+  MAX_CHANGES_PER_SEVERITY,
+  capitalize,
+  describeChangeCount,
+  escapeHtml,
+  formatDetectedAt,
+  getProgramUrl,
+  groupBySeverity,
+  highestSeverity,
+  truncateSummary,
+} from "./format";
 
 const TELEGRAM_API_TIMEOUT_MS = 10_000;
 
@@ -35,7 +47,7 @@ export async function sendTelegramUserNotification(
       body: JSON.stringify({
         chat_id: config.chatId,
         text: message,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         disable_web_page_preview: true,
       }),
       timeoutMs: TELEGRAM_API_TIMEOUT_MS,
@@ -56,63 +68,66 @@ export async function sendTelegramUserNotification(
   }
 }
 
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+
 /**
- * Formats changes into a Telegram message (same format as admin notifications)
+ * Formats changes into a Telegram HTML message.
  */
 export function formatTelegramMessage(
   programName: string,
   programId: string,
-  changes: NotificationChange[]
+  changes: NotificationChange[],
+  programUrl: string | null = changes[0] ? getProgramUrl(changes[0].monitored_programs.id) : null
 ): string {
+  const safeName = escapeHtml(programName);
   if (changes.length === 0) {
-    return `🔍 *IDL Sentinel*\n\nNo changes detected for program *${escapeMarkdown(programName)}*`;
+    return `🔍 <b>IDL Sentinel</b>\n\nNo changes detected for program <b>${safeName}</b>`;
   }
 
-  // Group changes by severity
-  const changesBySeverity = {
-    critical: changes.filter((c) => c.severity === "critical"),
-    high: changes.filter((c) => c.severity === "high"),
-    medium: changes.filter((c) => c.severity === "medium"),
-    low: changes.filter((c) => c.severity === "low"),
-  };
+  const severity = highestSeverity(changes);
+  const programLabel = programUrl
+    ? `<a href="${programUrl}">${safeName}</a>`
+    : `<b>${safeName}</b>`;
 
-  let message = `🚨 *IDL Sentinel - Changes Detected*\n\n`;
-  message += `📋 *Program:* ${escapeMarkdown(programName)}\n`;
-  message += `🔗 *Address:* \`${programId}\`\n`;
-  message += `📊 *Total Changes:* ${changes.length}\n\n`;
+  const header = [
+    `${SEVERITY_EMOJI[severity]} <b>IDL change detected</b>`,
+    "",
+    `📋 <b>Program:</b> ${programLabel}`,
+    `🔗 <b>Address:</b> <code>${programId}</code>`,
+    `📊 <b>Changes:</b> ${escapeHtml(describeChangeCount(changes))}`,
+    "",
+  ];
 
-  // Add changes by severity
-  for (const [severity, severityChanges] of Object.entries(changesBySeverity)) {
-    if (severityChanges.length === 0) continue;
+  const footer = [`⏰ <b>Detected:</b> ${formatDetectedAt(changes)}`];
+  if (programUrl) footer.push(`<a href="${programUrl}">View diff in IDL Sentinel</a>`);
 
-    const severityTitle = severity.charAt(0).toUpperCase() + severity.slice(1);
-
-    message += `*${severityTitle} (${severityChanges.length})*\n`;
-
-    for (const change of severityChanges.slice(0, 5)) {
-      // Limit to 5 per severity
-      message += `• ${escapeMarkdown(change.change_summary)}\n`;
+  const sections: string[] = [];
+  for (const group of groupBySeverity(changes)) {
+    const lines = [
+      `<b>${SEVERITY_EMOJI[group.severity]} ${capitalize(group.severity)} (${group.changes.length})</b>`,
+    ];
+    for (const change of group.changes.slice(0, MAX_CHANGES_PER_SEVERITY)) {
+      lines.push(`• ${escapeHtml(truncateSummary(change.change_summary))}`);
     }
-
-    if (severityChanges.length > 5) {
-      message += `• ... and ${severityChanges.length - 5} more\n`;
-    }
-
-    message += "\n";
+    const remaining = group.changes.length - MAX_CHANGES_PER_SEVERITY;
+    if (remaining > 0) lines.push(`• … and ${remaining} more`);
+    sections.push(lines.join("\n"));
   }
 
-  // Add timestamp
-  const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19);
-  message += `⏰ *Detected:* ${timestamp} UTC`;
+  const build = (body: string[]) => [...header, ...body, "", ...footer].join("\n");
+  let message = build(sections.flatMap((section) => [section, ""]));
+
+  // Telegram rejects messages above 4096 characters; drop detail lines until it fits.
+  while (message.length > TELEGRAM_MESSAGE_LIMIT && sections.length > 0) {
+    const omitted = sections.length;
+    sections.pop();
+    message = build([
+      ...sections.flatMap((section) => [section, ""]),
+      `<i>${omitted} more severity group${omitted === 1 ? "" : "s"} omitted. Open the program page for the full list.</i>`,
+    ]);
+  }
 
   return message;
-}
-
-/**
- * Escapes Markdown special characters for Telegram
- */
-export function escapeMarkdown(text: string): string {
-  return text.replace(/[_*[\]()~`>#+=|{}.!-]/g, "\\$&");
 }
 
 export async function sendTelegramWatchlistNotifications(deadline = Date.now() + 45_000) {
@@ -147,7 +162,7 @@ export async function testTelegramConfig(chatId: string): Promise<boolean> {
       return false;
     }
 
-    const testMessage = `🧪 *IDL Sentinel Test*\n\nThis is a test notification to verify your Telegram configuration.\n\n⏰ *Sent:* ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`;
+    const testMessage = `🧪 <b>IDL Sentinel Test</b>\n\nYour Telegram account is connected. IDL change alerts for programs in your watchlist will arrive here.\n\n⏰ <b>Sent:</b> ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`;
 
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 
@@ -159,7 +174,7 @@ export async function testTelegramConfig(chatId: string): Promise<boolean> {
       body: JSON.stringify({
         chat_id: chatId,
         text: testMessage,
-        parse_mode: "Markdown",
+        parse_mode: "HTML",
         disable_web_page_preview: true,
       }),
       timeoutMs: TELEGRAM_API_TIMEOUT_MS,

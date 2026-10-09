@@ -295,7 +295,7 @@ export function ProgramForm({ initialData, programId, isEdit = false }: ProgramF
       }
 
       const payment = (intentData as PaymentIntentResponse).payment_intent;
-      setMessage("Approve the 5 USDC payment in your wallet...");
+      setMessage(`Approve the ${payment.amount_usdc} USDC payment in your wallet...`);
 
       const mint = new PublicKey(payment.usdc_mint);
       const sourceTokenAccount = getAssociatedTokenAddressSync(mint, publicKey);
