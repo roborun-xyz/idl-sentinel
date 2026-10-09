@@ -218,10 +218,6 @@ export function ProgramForm({ initialData, programId, isEdit = false }: ProgramF
       if (data.idl_summary?.name && !formData.name.trim()) {
         setFormData((prev) => ({ ...prev, name: data.idl_summary.name }));
       }
-
-      if (data.already_monitored) {
-        setMessage("This program is already monitored. No payment is required.");
-      }
     } catch (error) {
       console.error("Error previewing program:", error);
       setMessage("Failed to preview program");
@@ -504,8 +500,18 @@ export function ProgramForm({ initialData, programId, isEdit = false }: ProgramF
               <div className="rounded-md border border-green-200 bg-green-50 p-4 text-sm text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-100">
                 <div className="mb-1 font-medium">{preview.program.name} is already monitored</div>
                 <div>
-                  No payment is required. Add it to your watchlist to receive notifications.
+                  No payment is required. Add it to your watchlist to receive notifications, or{" "}
+                  <Link
+                    href={`/programs/${preview.program.id}`}
+                    className="font-medium underline underline-offset-4"
+                  >
+                    view its snapshot history
+                  </Link>
+                  .
                 </div>
+                {!isAuthenticated && (
+                  <div className="mt-2">Connect your wallet and sign in to start watching it.</div>
+                )}
               </div>
             )}
 

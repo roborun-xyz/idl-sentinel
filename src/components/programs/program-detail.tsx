@@ -39,6 +39,7 @@ import {
 } from "@/hooks/use-programs";
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { useAuth } from "@/lib/auth/auth-context";
+import { AddToWatchlistButton } from "@/components/watchlist/add-to-watchlist-button";
 
 const SnapshotJson = dynamic(() => import("./snapshot-json"), {
   loading: () => <p>Loading viewer…</p>,
@@ -204,6 +205,7 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
         </Button>
 
         <div className="flex items-center gap-2">
+          <AddToWatchlistButton programId={program.program_id} programDbId={program.id} size="sm" />
           <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             Refresh

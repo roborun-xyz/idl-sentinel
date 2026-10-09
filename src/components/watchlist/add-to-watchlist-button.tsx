@@ -48,7 +48,18 @@ export function AddToWatchlistButton({
   };
 
   if (!isAuthenticated && !authLoading) {
-    return null; // Don't show button for non-authenticated users
+    return (
+      <Button
+        variant={variant}
+        size={size}
+        disabled
+        title="Connect your wallet and sign in to watch this program"
+        className="flex items-center gap-2"
+      >
+        <Star className="h-4 w-4" />
+        <span>Sign in to watch</span>
+      </Button>
+    );
   }
 
   if (checking || authLoading) {
