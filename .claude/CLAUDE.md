@@ -1,6 +1,6 @@
 ---
 created_at: 2025-12-28
-updated_at: 2026-10-08
+updated_at: 2026-10-16
 ---
 
 # CLAUDE.md
@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-IDL Sentinel is a Next.js application that polls Solana program IDLs (Interface Definition Languages) for changes and sends notifications to users via Slack, Discord, and Telegram. Admins register programs directly; signed-in users can activate a new shared program through a one-time USDC payment. The app classifies structural changes and notifies subscribed users.
+IDL Sentinel is a Next.js application that alerts users when Solana programs they depend on change: IDL (Interface Definition Language) diffs, redeploys, upgrade-authority changes, Squads v4 upgrade proposals, and verified-build status. Alerts go to Slack, Discord, Telegram, PagerDuty, and HMAC-signed webhooks. Admins register programs directly; signed-in users can activate a new shared program through a one-time USDC payment. The app classifies structural changes and notifies subscribed users.
 
 ## Tech Stack
 
@@ -17,7 +17,7 @@ IDL Sentinel is a Next.js application that polls Solana program IDLs (Interface 
 - **Database**: Supabase (PostgreSQL with Row Level Security)
 - **Blockchain**: Solana Web3.js with Anchor legacy and Solana Program Metadata IDL discovery
 - **Authentication**: Wallet-based auth using Solana wallet adapters
-- **Notifications**: Slack incoming webhooks, Discord webhooks, and the Telegram Bot API
+- **Notifications**: Slack and Discord webhooks, the Telegram Bot API, PagerDuty Events API v2, and signed webhooks
 - **Styling**: Tailwind CSS with Radix UI components
 
 ## Common Commands
@@ -46,7 +46,7 @@ npx supabase db pull
 ```
 
 For fresh databases, run `supabase/schema.sql` in the Supabase SQL Editor. For
-existing installations, pause both schedulers, run
+existing installations, pause all three schedulers, run
 `supabase/upgrade_reliability.sql`, deploy the matching app release, and resume
 the schedules. Editing `schema.sql` does not make `supabase db push` apply it;
 that command uses CLI migration files. See `supabase/README.md` for the workflow.
@@ -78,6 +78,7 @@ UPDATE users SET is_admin = true WHERE wallet_address = 'YOUR_WALLET';
    - Orchestrates: monitoring → change detection → notifications
    - Uses a database lease to avoid overlapping monitoring runs
    - `/api/cron/notifications` independently drains deliveries every five minutes
+   - `/api/cron/watch-programs` runs the program watch every five minutes (below)
 
 2. **IDL Fetching** ([lib/solana/idl-fetcher.ts](../src/lib/solana/idl-fetcher.ts))
    - Looks for a legacy Anchor IDL first, then Solana Program Metadata `idl` entries
@@ -99,7 +100,17 @@ UPDATE users SET is_admin = true WHERE wallet_address = 'YOUR_WALLET';
    - Assigns severity levels: low, medium, high, critical
    - See the severity rules below for instruction, account, type, and error changes
 
-5. **Notification System**
+5. **Program Watch** ([lib/chain/](../src/lib/chain/))
+   - `watch.ts`: `watchPrograms(store, reader, options)` with injected `ChainReader` (RPC) and `ChainStore` (DB)
+   - `loaders.ts`: upgradeable loader / loader v4 decoding, code hash (matches `solana-verify`), loader instruction classification
+   - `squads.ts`: Squads v4 multisig, vault transaction, and proposal decoding; PDA derivation
+   - `verify.ts`: OtterSec verify API, classified against our own code hash
+   - `state.ts`: `ChainState`, `chainStateHash` (excludes bookkeeping timestamps), and `diffChainStates` (first observation is a silent baseline)
+   - State lives in `program_chain_states`; `record_chain_transition` writes it and inserts `idl_changes` rows with a null `new_snapshot_id`
+   - Change types live in `ProgramChangeType`; `lib/changes/categories.ts` maps them to categories and labels for UI, API, and alerts
+   - Decoder tests use read-only mainnet captures in `tests/fixtures/mainnet-accounts.json`
+
+6. **Notification System**
    - **Slack** ([lib/notifications/slack.ts](../src/lib/notifications/slack.ts))
      - User-configurable webhook URLs
      - Sends formatted messages with change summaries grouped by severity
@@ -111,6 +122,15 @@ UPDATE users SET is_admin = true WHERE wallet_address = 'YOUR_WALLET';
      - Shared bot with per-user chat connections
      - Uses connection tokens for authentication flow
      - Similar watchlist-based notification logic
+   - **Signed webhook** ([lib/notifications/webhook.ts](../src/lib/notifications/webhook.ts))
+     - HMAC-SHA256 over `"<timestamp>.<body>"`; per-user secret in `users.webhook_secret`
+     - `url-guard.ts` refuses private/loopback/link-local targets at save and send time; redirects are not followed
+   - **PagerDuty** ([lib/notifications/pagerduty.ts](../src/lib/notifications/pagerduty.ts))
+     - Events API v2 routing key and `pagerduty_min_severity` per user; below-threshold batches count as delivered
+
+7. **Public API and CI**
+   - `/api/v1/*` ([lib/api/v1.ts](../src/lib/api/v1.ts)): unauthenticated, CORS-open, cached read API; keyset cursor keeps the database's microsecond timestamp text
+   - `action.yml` + `scripts/idl-sentinel-check.mjs`: zero-dependency CI pin/check; documented in `docs/integrations.md`
 
 ### Authentication & Authorization
 
@@ -158,6 +178,7 @@ are not a complete migration chain. Key tables:
 - **monitoring_logs**: System logs for debugging
 - **program_activation_payments**: Payment intents, transaction signatures, and activation status
 - **notification_deliveries**: Per-user, per-change, per-channel delivery receipts
+- **program_chain_states**: Latest on-chain state per program (JSONB)
 - **cron_locks**: Worker leases
 - **auth_nonces**: Expiring, single-use login challenges
 
@@ -251,9 +272,9 @@ See [supabase/README.md](../supabase/README.md) for detailed instructions.
 
 ## Cron Job Configuration
 
-`vercel.json` schedules `/api/cron/monitor-idls` every 15 minutes and
-`/api/cron/notifications` every five minutes. Other deployments must schedule both
-endpoints with the same `CRON_SECRET` bearer header. For local testing:
+`vercel.json` schedules `/api/cron/monitor-idls` every 15 minutes, and
+`/api/cron/watch-programs` and `/api/cron/notifications` every five minutes. Other
+deployments must schedule all three endpoints with the same `CRON_SECRET` bearer header. For local testing:
 
 ```bash
 # Test the monitoring endpoint manually
@@ -302,6 +323,8 @@ Changes have separate notification flags for each channel:
 - `slack_notified` / `slack_notified_at`
 - `telegram_user_notified` / `telegram_user_notified_at`
 - `discord_notified` / `discord_notified_at`
+- `webhook_notified` / `webhook_notified_at`
+- `pagerduty_notified` / `pagerduty_notified_at`
 
 These flags are supplemented by per-channel retry timestamps and
 `notification_deliveries` receipts. The notification workers use per-channel

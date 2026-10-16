@@ -1,20 +1,22 @@
 ---
 created_at: 2025-11-02
-updated_at: 2026-10-08
+updated_at: 2026-10-16
 ---
 
 # IDL Sentinel
 
-IDL Sentinel is a self-hostable Next.js app for watching Solana program IDLs.
-It fetches on-chain IDLs on a schedule, stores versioned snapshots, classifies
-structural changes, and sends alerts to users who watch the affected programs.
+IDL Sentinel is a self-hostable Next.js app that alerts you when a Solana program
+you depend on changes. It diffs on-chain IDLs, watches deployed code and upgrade
+authority, reads the Squads multisig behind an upgrade so you hear about an
+approved upgrade before it executes, and checks deployed code against verified
+builds.
 An IDL, or Interface Definition Language, describes a program's public interface:
 the instructions clients can call, the accounts they pass, the custom types they
 decode, and the errors they may receive.
 
-Use it when you depend on Solana programs and want to know when their public API
-surface changes: instructions, account layouts, custom types, errors, or the IDL
-itself.
+Use it when you depend on Solana programs you do not control and want to know when
+their public API surface changes (instructions, account layouts, types, errors), when
+their code is redeployed, or when someone queues a change to who can upgrade them.
 
 IDL Sentinel is useful for protocol teams, integrators, wallet and indexer
 developers, auditors, and anyone else who wants a warning when a program's
@@ -22,11 +24,22 @@ published interface changes.
 
 ## What It Does
 
-- Monitors Anchor legacy IDL accounts and Solana Program Metadata IDL entries.
+- Monitors Anchor legacy IDL accounts and Solana Program Metadata IDL entries, in
+  Anchor or [Codama](https://github.com/codama-idl/codama) format (SPL Token,
+  Token-2022, System). Third-party metadata written by the program's own upgrade
+  authority is preferred over metadata anyone else published.
 - Stores every new IDL snapshot in Supabase.
 - Compares snapshots and records low, medium, high, or critical changes.
+- Detects redeploys (even when the IDL is unchanged), upgrade-authority changes,
+  immutability, and program closure.
+- Finds the Squads v4 multisig behind an upgrade authority and alerts when a
+  proposal to upgrade, re-authorize, or close the program is created, approved
+  (with its timelock), or cancelled, and when the multisig itself is reconfigured.
+- Hashes deployed code like `solana-verify` and compares it with OtterSec verified builds.
 - Alerts only users who have the changed program in their watchlist.
-- Supports Slack incoming webhooks, Discord webhooks, and Telegram bot notifications.
+- Supports Slack, Discord, Telegram, PagerDuty (Events API v2), and HMAC-signed webhooks.
+- Serves a public read-only JSON API and ships a GitHub Action that fails CI when a
+  pinned dependency changes. See [docs/integrations.md](docs/integrations.md).
 - Lets admins add programs directly.
 - Lets regular users activate a new shared program by paying a one-time USDC fee.
 
@@ -190,10 +203,10 @@ program; adding an existing program to a watchlist is free.
 
 ## Upgrading an Existing Installation
 
-Pause the monitoring and notification schedulers, then execute the entire
+Pause the monitoring, program-watch, and notification schedulers, then execute the entire
 [supabase/upgrade_reliability.sql](supabase/upgrade_reliability.sql) in the Supabase
 SQL Editor. The script is transactional and safe to reapply. Deploy this release,
-then resume both schedules. Do not run the old monitoring code after this upgrade.
+then resume the schedules. Do not run the old monitoring code after this upgrade.
 
 The upgrade records recurring IDL content as separate chronological versions,
 commits snapshots and changes atomically, adds database-backed login challenges,
@@ -241,6 +254,37 @@ Each run:
 - sends pending Slack, Discord, and Telegram notifications,
 - cleans up expired Telegram connection tokens.
 
+## Program Watch
+
+```text
+GET /api/cron/watch-programs
+Authorization: Bearer <CRON_SECRET>
+```
+
+[vercel.json](vercel.json) runs it every five minutes. Each run batch-reads the
+program and ProgramData accounts of every active program (two RPC calls per 100
+programs) and, per program:
+
+- records the loader, deploy slot and time, and upgrade authority;
+- on a new deploy, downloads the code once and hashes it (SHA-256 of the ELF without
+  trailing zero padding, the same hash `solana-verify get-program-hash` prints);
+- asks the [OtterSec verify API](https://verify.osec.io) whether that hash matches
+  a verified build, again every six hours for unchanged code;
+- when the authority is a Squads v4 vault, reads the multisig, classifies new vault
+  transactions that call the upgradeable loader on this program, and tracks their
+  proposals until they execute, fail, or go stale.
+
+The first observation of a program is a silent baseline. Later differences become
+changes in the same table as IDL diffs, so every channel, the Changes page, and the
+API deliver them. Per-run budgets cap code downloads, verify calls, and multisig
+discovery so a large registry fills in over several runs; upgrades get priority.
+Alerts are sent at the end of the run rather than waiting for the next notification tick.
+
+Limitations: only Squads v4 is decoded (v3 and other governance programs show as
+"another key or program"); multisig discovery reads up to the authority's last 100
+transactions; on first sight of a multisig only its last 10 transactions are classified; a verified build proves the source reproduces the code, not that the
+code is safe.
+
 ## Notifications
 
 Notifications are watchlist-based. A user receives an alert only when:
@@ -283,6 +327,17 @@ highest severity, with a link to the program page.
 
 Telegram connection links expire after 10 minutes.
 
+### Signed Webhooks and PagerDuty
+
+Settings, Integrations accepts any public `https://` URL. Each alert batch is a JSON
+`POST` signed with HMAC-SHA256; the secret is minted on save and can be rotated.
+Private, loopback, and link-local addresses are refused when saving and again at
+send time, and redirects are not followed.
+
+PagerDuty takes an Events API v2 routing key and a minimum severity (default
+`high`). Each program batch opens one incident with a stable dedup key. Payload
+formats and verification code are in [docs/integrations.md](docs/integrations.md).
+
 ## User Roles
 
 ### Admins
@@ -320,6 +375,15 @@ IDL Sentinel assigns a severity to each detected change:
 New instructions whose names include `initialize`, `close`, `withdraw`,
 `transfer`, `mint`, or `burn` are classified as medium rather than low.
 
+On-chain events from the program watch:
+
+| Severity   | Events                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `critical` | Upgrade authority changed, program closed, Squads proposal approved, proposal to change authority or close created, multisig weakened |
+| `high`     | Program redeployed, upgrade proposed, deployed code no longer matches its verified build, multisig reconfigured otherwise             |
+| `medium`   | Upgrade authority removed (program made immutable)                                                                                    |
+| `low`      | Proposal cancelled, rejected, or stale; deployed code newly matches a verified build                                                  |
+
 ## Useful Commands
 
 ```bash
@@ -335,10 +399,14 @@ pnpm format:check
 ## Project Structure
 
 ```text
-src/app/api/cron/monitor-idls/  Monitoring cron endpoint
+src/app/api/cron/monitor-idls/  IDL monitoring cron endpoint
+src/app/api/cron/watch-programs/ Program watch cron endpoint
+src/app/api/v1/                 Public read-only API
+src/lib/chain/                  Loader, Squads v4, and verified-build decoding and diffing
 src/lib/solana/idl-fetcher.ts   On-chain IDL discovery and parsing
 src/lib/monitoring/             Snapshot comparison and change detection
-src/lib/notifications/          Slack, Discord, and Telegram delivery
+src/lib/notifications/          Slack, Discord, Telegram, PagerDuty, and webhook delivery
+scripts/idl-sentinel-check.mjs  CI checker used by action.yml
 src/lib/auth/                   Wallet signature auth and JWT sessions
 src/lib/db/                     Supabase data access helpers
 supabase/schema.sql             Database source of truth
@@ -371,8 +439,8 @@ Authorization: Bearer <CRON_SECRET>
 
 ### No notifications are sent
 
-Check that the program is in the user's watchlist, the user configured Slack,
-Discord, or Telegram, the cron endpoint is running, and there is at least one pending change
+Check that the program is in the user's watchlist, the user configured at least one
+channel, the cron endpoints are running, and there is at least one pending change
 for that watched program.
 
 ### Payment activation fails
