@@ -585,7 +585,11 @@ export function validateIdl(value: unknown): value is SolanaIdl {
 /**
  * Creates a connection to Solana RPC
  */
-export function createSolanaConnection(rpcUrl?: string, signal?: AbortSignal): Connection {
+export function createSolanaConnection(
+  rpcUrl?: string,
+  signal?: AbortSignal,
+  limits: { timeoutMs?: number; maxBytes?: number } = {}
+): Connection {
   const url = rpcUrl || process.env.SOLANA_RPC_URL;
   if (!url)
     throw new Error("SOLANA_RPC_URL must be configured (use your Helius endpoint for mainnet)");
@@ -595,7 +599,8 @@ export function createSolanaConnection(rpcUrl?: string, signal?: AbortSignal): C
     fetch: (input, init) =>
       fetchWithTimeout(input, {
         ...(init || {}),
-        timeoutMs: SOLANA_RPC_TIMEOUT_MS,
+        timeoutMs: limits.timeoutMs ?? SOLANA_RPC_TIMEOUT_MS,
+        maxBytes: limits.maxBytes,
         signal,
       }),
   };
