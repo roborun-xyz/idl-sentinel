@@ -1,0 +1,35 @@
+name: IDL Sentinel dependency check
+description: Fail CI when a Solana program you depend on was upgraded, re-authorized, or changed its IDL since you pinned it.
+author: IDL Sentinel contributors
+branding:
+  icon: shield
+  color: purple
+inputs:
+  config:
+    description: Path to the pin file created by `idl-sentinel-check.mjs pin`.
+    default: .idl-sentinel.json
+  fail-on:
+    description: Lowest change severity that fails the job (low, medium, high, critical). Defaults to the config's fail_on, then high.
+    default: ""
+  api-url:
+    description: IDL Sentinel base URL. Overrides the config's api field.
+    default: ""
+  fail-on-pending:
+    description: Also fail while an approved Squads upgrade is waiting to execute.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Check pinned Solana programs
+      shell: bash
+      env:
+        IDL_SENTINEL_CONFIG: ${{ inputs.config }}
+        IDL_SENTINEL_FAIL_ON: ${{ inputs.fail-on }}
+        IDL_SENTINEL_API: ${{ inputs.api-url }}
+        IDL_SENTINEL_FAIL_ON_PENDING: ${{ inputs.fail-on-pending }}
+      run: |
+        args=(check --config "$IDL_SENTINEL_CONFIG")
+        [ -n "$IDL_SENTINEL_FAIL_ON" ] && args+=(--fail-on "$IDL_SENTINEL_FAIL_ON")
+        [ -n "$IDL_SENTINEL_API" ] && args+=(--api "$IDL_SENTINEL_API")
+        [ "$IDL_SENTINEL_FAIL_ON_PENDING" = "true" ] && args+=(--fail-on-pending)
+        node "$GITHUB_ACTION_PATH/scripts/idl-sentinel-check.mjs" "${args[@]}"
