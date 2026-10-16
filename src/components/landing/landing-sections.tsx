@@ -5,33 +5,37 @@ import {
   BellRing,
   Blocks,
   Coins,
-  Diff,
   Eye,
   GitCompareArrows,
   LockKeyhole,
   Plus,
-  ShieldAlert,
+  ShieldCheck,
+  Terminal,
+  Users,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { RepositoryLink } from "@/components/layout/repository-link";
 import { severityDotColors } from "@/lib/utils";
 
-const POLL_INTERVAL_MINUTES = 15;
+const IDL_POLL_MINUTES = 15;
+const CHAIN_POLL_MINUTES = 5;
 
 export function Hero() {
   return (
     <section className="space-y-6 pt-2 text-center sm:pt-6">
       <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
-        IDL change monitoring for Solana
+        Change alerts for the Solana programs you depend on
       </p>
       <h1 className="mx-auto max-w-3xl text-3xl font-bold tracking-tight text-foreground sm:text-5xl">
-        Know when a program&apos;s interface changes before your integration breaks.
+        Know when a program you depend on changes, before it breaks your integration.
       </h1>
       <p className="mx-auto max-w-2xl px-2 text-base text-muted-foreground sm:text-lg">
-        IDL Sentinel polls on-chain Anchor and Program Metadata IDLs every {POLL_INTERVAL_MINUTES}{" "}
-        minutes, keeps every version, classifies the diff by severity, and alerts your Slack,
-        Discord, or Telegram when instructions, accounts, types, or errors change.
+        IDL Sentinel diffs on-chain IDLs every {IDL_POLL_MINUTES} minutes and checks deployed code,
+        upgrade authority, and Squads multisig proposals every {CHAIN_POLL_MINUTES} minutes. You
+        hear about an approved upgrade before it executes, on Slack, Discord, Telegram, PagerDuty,
+        or a signed webhook.
       </p>
       <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
         <Button asChild size="lg">
@@ -60,12 +64,12 @@ const steps = [
   {
     icon: Eye,
     title: "Watch it",
-    body: "Add the program to your watchlist and connect Slack, Discord, or Telegram from Settings. Watching an already-registered program is free.",
+    body: "Add the program to your watchlist and connect Slack, Discord, Telegram, PagerDuty, or a signed webhook from Settings. Watching an already-registered program is free.",
   },
   {
     icon: BellRing,
-    title: "Get a diff, not a hash",
-    body: "Each alert names what changed and how severe it is. Open the program page to compare any two versions side by side or download the JSON.",
+    title: "Get the change, not a hash",
+    body: "Each alert names what changed and how severe it is: an IDL diff, a redeploy, a new upgrade authority, or a multisig vote. Pin programs in CI to fail builds on breaking changes.",
   },
 ];
 
@@ -102,21 +106,23 @@ export function HowItWorks() {
 const severities = [
   {
     level: "critical" as const,
-    examples: "Instruction removed, signer requirement or discriminator changed, IDL disappeared.",
+    examples:
+      "Instruction removed, signer or discriminator changed, IDL removed. Upgrade authority handed off, program closed, Squads upgrade approved, multisig threshold lowered.",
   },
   {
     level: "high" as const,
     examples:
-      "Account or type removed, account layout changed, instruction arguments or mutability changed.",
+      "Account or type removed, account layout or instruction arguments changed. Program redeployed, upgrade proposed, deployed code no longer matches its verified build.",
   },
   {
     level: "medium" as const,
     examples:
-      "Other instruction edits, type modifications, error removed, new initialize/withdraw/close style instructions.",
+      "Other instruction edits, type modifications, error removed, new initialize/withdraw/close style instructions, program made immutable.",
   },
   {
     level: "low" as const,
-    examples: "New instructions, accounts, types, or errors; error names or messages reworded.",
+    examples:
+      "New instructions, accounts, types, or errors; reworded error messages; a proposal cancelled; code newly matching a verified build.",
   },
 ];
 
@@ -210,23 +216,33 @@ export function Pricing({ feeUsdc }: PricingProps) {
 const features = [
   {
     icon: GitCompareArrows,
-    title: "Anchor and Program Metadata",
-    body: "Reads legacy Anchor IDL accounts and the newer Program Metadata idl entries, inline, URL-referenced, or in external accounts.",
+    title: "Anchor and Program Metadata IDLs",
+    body: "Reads legacy Anchor IDL accounts and Program Metadata idl entries, keeps every version, and treats a confirmed missing IDL as critical.",
   },
   {
-    icon: Diff,
-    title: "Full version history",
-    body: "Every distinct IDL is kept as a snapshot with its hash and timestamp. Rollbacks show up as new versions, not silent no-ops.",
+    icon: Wrench,
+    title: "Upgrade and authority watch",
+    body: "Catches redeploys even when the IDL stays the same, plus upgrade-authority handoffs, immutability, and closure. Code hashes match solana-verify.",
   },
   {
-    icon: ShieldAlert,
-    title: "Removal detection",
-    body: "A confirmed missing IDL is a critical alert. RPC hiccups are retried and logged instead of raising false alarms.",
+    icon: Users,
+    title: "Squads early warning",
+    body: "Finds the Squads v4 multisig behind an upgrade authority and alerts when an upgrade or authority change is proposed, approved, or cancelled, with its timelock.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Verified-build checks",
+    body: "Compares deployed code against OtterSec verified builds and flags new code that no longer matches its published source.",
+  },
+  {
+    icon: Terminal,
+    title: "CI check and public API",
+    body: "A GitHub Action fails your build when a pinned dependency changes. A read-only JSON API serves program status and change feeds.",
   },
   {
     icon: Bell,
     title: "Reliable delivery",
-    body: "Per-recipient delivery receipts and bounded retries mean a flaky webhook does not drop the alert for everyone else.",
+    body: "Per-recipient receipts and bounded retries across Slack, Discord, Telegram, PagerDuty, and HMAC-signed webhooks.",
   },
 ];
 

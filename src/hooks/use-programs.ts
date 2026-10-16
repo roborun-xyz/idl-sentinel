@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "./query-keys";
 import type { MonitoredProgram, IdlSnapshot } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/auth-context";
+import type { ProgramChainStateRow } from "@/lib/db/chain";
 
 interface ProgramsResponse {
   programs: MonitoredProgram[];
@@ -103,6 +104,19 @@ export function useProgramChanges(id: string, limit = 10) {
       return response.json();
     },
     enabled: !!id,
+  });
+}
+
+export function useProgramChain(id: string) {
+  return useQuery<{ chain: ProgramChainStateRow | null }>({
+    queryKey: queryKeys.programChain(id),
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/programs/${id}/chain`, { signal });
+      if (!response.ok) throw new Error("Failed to fetch on-chain state");
+      return response.json();
+    },
+    enabled: !!id,
+    refetchInterval: 60_000,
   });
 }
 

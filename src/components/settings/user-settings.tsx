@@ -16,6 +16,7 @@ import {
   useTelegramConnect,
   useTelegramConnectionPoll,
 } from "@/hooks/use-user-settings";
+import { IntegrationSettings } from "./integration-settings";
 
 export function UserSettings() {
   const { isAuthenticated, isLoading: authLoading, walletAddress } = useAuth();
@@ -348,7 +349,8 @@ export function UserSettings() {
               Slack Webhook URL
             </label>
             <p className="mb-3 text-xs text-muted-foreground">
-              Receive notifications in Slack when programs in your watchlist have IDL changes.{" "}
+              Receive notifications in Slack when programs in your watchlist change: IDL diffs,
+              upgrades, authority, and multisig activity.{" "}
               <a
                 href="https://api.slack.com/messaging/webhooks"
                 target="_blank"
@@ -463,7 +465,7 @@ export function UserSettings() {
           <div>
             <label className="mb-2 block text-sm font-medium">Telegram Notifications</label>
             <p className="mb-4 text-xs text-muted-foreground">
-              Receive notifications via Telegram when programs in your watchlist have IDL changes.
+              Receive notifications via Telegram when programs in your watchlist change.
             </p>
 
             {!settings?.telegram_chat_id ? (
@@ -600,6 +602,8 @@ export function UserSettings() {
           </div>
         </div>
       </Card>
+
+      <IntegrationSettings />
     </div>
   );
 }

@@ -9,6 +9,10 @@ interface UserSettings {
   discord_webhook_url: string | null;
   telegram_chat_id: string | null;
   telegram_username: string | null;
+  webhook_url: string | null;
+  webhook_secret: string | null;
+  pagerduty_routing_key: string | null;
+  pagerduty_min_severity: "low" | "medium" | "high" | "critical";
   preferred_explorer: "explorer.solana.com" | "solscan.io";
   is_admin: boolean;
   created_at: string;
@@ -46,9 +50,15 @@ export function useUpdateSettings() {
       updates: Partial<
         Pick<
           UserSettings,
-          "slack_webhook_url" | "discord_webhook_url" | "telegram_chat_id" | "preferred_explorer"
+          | "slack_webhook_url"
+          | "discord_webhook_url"
+          | "telegram_chat_id"
+          | "preferred_explorer"
+          | "webhook_url"
+          | "pagerduty_routing_key"
+          | "pagerduty_min_severity"
         >
-      >
+      > & { rotate_webhook_secret?: boolean }
     ) => {
       const response = await fetch("/api/user/settings", {
         method: "PUT",
@@ -97,6 +107,22 @@ export function useTestDiscordWebhook() {
         throw new Error(error.error || "Failed to send test notification");
       }
       return response.json();
+    },
+  });
+}
+
+/** Sends a test through a saved server-side integration (signed webhook or PagerDuty). */
+export function useTestIntegration() {
+  return useMutation({
+    mutationFn: async (testType: "webhook" | "pagerduty") => {
+      const response = await fetch("/api/user/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_type: testType }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Failed to send test event");
+      return body as { message: string };
     },
   });
 }

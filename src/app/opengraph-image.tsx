@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "IDL Sentinel: Solana program IDL change monitoring";
+export const alt = "IDL Sentinel: change alerts for the Solana programs you depend on";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -32,11 +32,11 @@ export default function OpenGraphImage() {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div style={{ fontSize: 64, fontWeight: 700, lineHeight: 1.1, letterSpacing: -2 }}>
-          Know when a Solana program&apos;s interface changes.
+          Know when a Solana program you depend on changes.
         </div>
         <div style={{ fontSize: 30, color: "#a3a3a3", lineHeight: 1.4 }}>
-          On-chain IDL polling, versioned snapshots, severity-classified diffs, and Slack, Discord,
-          or Telegram alerts.
+          IDL diffs, redeploys, upgrade authority, Squads proposals, and verified builds, with
+          alerts where your team works.
         </div>
       </div>
       <div style={{ display: "flex", gap: 14, fontSize: 24, color: "#a3a3a3" }}>

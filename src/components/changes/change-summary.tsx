@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCircle, TrendingUp, Flag, Layers } from "lucide-react";
 import { severityDotColors } from "@/lib/utils";
+import { changeTypeLabel } from "@/lib/changes/categories";
 
 interface ChangeStatistics {
   total: number;
@@ -103,7 +104,7 @@ export function ChangeSummary({ programId }: ChangeSummaryProps) {
           <CardContent>
             <div className="text-2xl font-bold">{stats.total}</div>
             <p className="text-xs text-muted-foreground">
-              {programId ? "For selected program" : "All detected IDL changes"}
+              {programId ? "For selected program" : "All detected changes"}
             </p>
           </CardContent>
         </Card>
@@ -191,7 +192,7 @@ export function ChangeSummary({ programId }: ChangeSummaryProps) {
                 {topChangeTypes.map(([type, count]) => (
                   <div key={type} className="flex items-center justify-between">
                     <Badge variant="outline" className="text-xs">
-                      {type.replace(/_/g, " ")}
+                      {changeTypeLabel(type)}
                     </Badge>
                     <div className="flex items-center space-x-2">
                       <span className="text-sm font-medium">{count}</span>

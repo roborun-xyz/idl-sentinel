@@ -21,8 +21,8 @@ export default async function ChangesPage({ searchParams }: ChangesPageProps) {
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Changes</h1>
           <p className="text-sm text-muted-foreground sm:text-base">
             {programId
-              ? "View detected IDL changes for the selected program"
-              : "View all detected IDL changes across your monitored programs"}
+              ? "IDL diffs, upgrades, authority, and multisig changes for the selected program"
+              : "IDL diffs, upgrades, authority, and multisig changes across monitored programs"}
           </p>
         </div>
 
