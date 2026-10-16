@@ -31,7 +31,7 @@ ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS discord_retry_at TIMESTAMPTZ NO
 CREATE INDEX IF NOT EXISTS idx_changes_discord_due ON idl_changes(discord_retry_at, detected_at, id) WHERE NOT discord_notified;
 ALTER TABLE notification_deliveries DROP CONSTRAINT IF EXISTS notification_deliveries_channel_check;
 ALTER TABLE notification_deliveries ADD CONSTRAINT notification_deliveries_channel_check
-    CHECK (channel IN ('slack', 'telegram_user', 'discord'));
+    CHECK (channel IN ('slack', 'telegram_user', 'discord', 'webhook', 'pagerduty'));
 
 CREATE TABLE IF NOT EXISTS auth_nonces (
     wallet_address TEXT PRIMARY KEY,
@@ -176,11 +176,96 @@ CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME = 'monitored_programs'
-        AND (to_jsonb(NEW) - 'last_polled_at') = (to_jsonb(OLD) - 'last_polled_at') THEN
+        AND (to_jsonb(NEW) - 'last_polled_at' - 'chain_checked_at')
+            = (to_jsonb(OLD) - 'last_polled_at' - 'chain_checked_at') THEN
         RETURN NEW;
     END IF;
     NEW.updated_at = NOW();
     RETURN NEW;
+END;
+$$;
+
+-- Generic signed webhooks and PagerDuty are two more channels. As with Discord,
+-- changes that predate a channel are marked delivered so new subscribers are not flooded.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS webhook_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS webhook_secret TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pagerduty_routing_key TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pagerduty_min_severity TEXT NOT NULL DEFAULT 'high';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_pagerduty_min_severity_check;
+ALTER TABLE users ADD CONSTRAINT users_pagerduty_min_severity_check
+    CHECK (pagerduty_min_severity IN ('low', 'medium', 'high', 'critical'));
+DO $$
+DECLARE c TEXT;
+BEGIN
+    FOREACH c IN ARRAY ARRAY['webhook', 'pagerduty'] LOOP
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+            AND table_name = 'idl_changes' AND column_name = c || '_notified') THEN
+            EXECUTE format('ALTER TABLE idl_changes ADD COLUMN %I BOOLEAN NOT NULL DEFAULT true', c || '_notified');
+            EXECUTE format('ALTER TABLE idl_changes ALTER COLUMN %I SET DEFAULT false', c || '_notified');
+        END IF;
+        EXECUTE format('ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS %I TIMESTAMPTZ', c || '_notified_at');
+        EXECUTE format('ALTER TABLE idl_changes ADD COLUMN IF NOT EXISTS %I TIMESTAMPTZ NOT NULL DEFAULT NOW()', c || '_retry_at');
+        EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON idl_changes(%I, detected_at, id) WHERE NOT %I',
+            'idx_changes_' || c || '_due', c || '_retry_at', c || '_notified');
+    END LOOP;
+END;
+$$;
+
+-- On-chain program state: loader, deploy slot, upgrade authority, Squads
+-- multisig and queued proposals, and verified-build status. Transitions become
+-- idl_changes rows without an IDL snapshot so every channel delivers them.
+ALTER TABLE idl_changes ALTER COLUMN new_snapshot_id DROP NOT NULL;
+ALTER TABLE monitored_programs ADD COLUMN IF NOT EXISTS chain_checked_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_programs_chain_order
+    ON monitored_programs(chain_checked_at ASC NULLS FIRST, id) WHERE is_active;
+CREATE TABLE IF NOT EXISTS program_chain_states (
+    program_id UUID PRIMARY KEY REFERENCES monitored_programs(id) ON DELETE CASCADE,
+    state JSONB NOT NULL,
+    state_hash TEXT NOT NULL,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE OR REPLACE FUNCTION list_chain_watch_targets(p_limit INT DEFAULT 500)
+RETURNS TABLE(id UUID, program_id TEXT, name TEXT, state JSONB, state_hash TEXT)
+LANGUAGE sql STABLE SET search_path = public AS $$
+    SELECT p.id, p.program_id, p.name, s.state, s.state_hash
+    FROM monitored_programs p LEFT JOIN program_chain_states s ON s.program_id = p.id
+    WHERE p.is_active
+    ORDER BY p.chain_checked_at ASC NULLS FIRST, p.id
+    LIMIT LEAST(GREATEST(p_limit, 1), 1000);
+$$;
+
+-- Same contract as record_idl_transition: lock the program, refuse a stale
+-- comparison, and commit the state with its changes or not at all.
+CREATE OR REPLACE FUNCTION record_chain_transition(
+    p_program_id UUID, p_expected_hash TEXT, p_hash TEXT, p_state JSONB, p_changes JSONB
+) RETURNS JSONB LANGUAGE plpgsql SET search_path = public AS $$
+DECLARE current_hash TEXT;
+BEGIN
+    PERFORM 1 FROM monitored_programs WHERE id = p_program_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Program not found'; END IF;
+    UPDATE monitored_programs SET chain_checked_at = NOW() WHERE id = p_program_id;
+    SELECT state_hash INTO current_hash FROM program_chain_states WHERE program_id = p_program_id;
+    IF current_hash = p_hash THEN
+        -- Same comparable state: persist refreshed bookkeeping (probe and verify
+        -- times) without counting it as a change.
+        UPDATE program_chain_states SET state = p_state, checked_at = NOW() WHERE program_id = p_program_id;
+        RETURN jsonb_build_object('created', false, 'changes_count', 0);
+    END IF;
+    IF current_hash IS DISTINCT FROM p_expected_hash THEN
+        RAISE EXCEPTION 'Chain state changed during comparison' USING ERRCODE = '40001';
+    END IF;
+    INSERT INTO program_chain_states(program_id, state, state_hash, checked_at, changed_at)
+        VALUES(p_program_id, p_state, p_hash, NOW(), NOW())
+        ON CONFLICT(program_id) DO UPDATE SET state = EXCLUDED.state,
+            state_hash = EXCLUDED.state_hash, checked_at = NOW(), changed_at = NOW();
+    INSERT INTO idl_changes(program_id, old_snapshot_id, new_snapshot_id,
+        change_type, change_summary, change_details, severity)
+        SELECT p_program_id, NULL, NULL,
+            change->>'changeType', change->>'changeSummary', change->'changeDetails', change->>'severity'
+        FROM jsonb_array_elements(p_changes) AS change;
+    RETURN jsonb_build_object('created', true, 'changes_count', jsonb_array_length(p_changes));
 END;
 $$;
 
@@ -192,7 +277,8 @@ DECLARE t TEXT; policy RECORD;
 BEGIN
     FOREACH t IN ARRAY ARRAY['users', 'monitored_programs', 'idl_snapshots', 'idl_changes',
         'notification_deliveries', 'user_watchlist', 'program_activation_payments',
-        'telegram_connection_tokens', 'monitoring_logs', 'cron_locks', 'auth_nonces']
+        'telegram_connection_tokens', 'monitoring_logs', 'cron_locks', 'auth_nonces',
+        'program_chain_states']
     LOOP
         EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
         FOR policy IN SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = t LOOP
@@ -213,7 +299,8 @@ BEGIN
         JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
         AND p.proname IN ('record_idl_transition', 'consume_auth_nonce', 'get_all_programs_with_last_check',
             'count_programs', 'get_change_statistics', 'get_dashboard_statistics', 'list_change_summaries',
-            'record_notification_delivery', 'try_acquire_cron_lock', 'release_cron_lock')
+            'record_notification_delivery', 'try_acquire_cron_lock', 'release_cron_lock',
+            'list_chain_watch_targets', 'record_chain_transition')
     LOOP
         EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated', fn.signature);
         EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', fn.signature);

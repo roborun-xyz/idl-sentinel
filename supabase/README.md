@@ -1,6 +1,6 @@
 ---
 created_at: 2025-11-08
-updated_at: 2026-10-08
+updated_at: 2026-10-16
 ---
 
 # Supabase Database Setup
@@ -76,9 +76,15 @@ The database consists of the following tables:
 - **notification_deliveries**: Per-user, per-change, per-channel delivery receipts
   - Preserves successful deliveries while failed recipients are retried
 
+- **program_chain_states**: One row per program with its latest on-chain state
+  - Loader, deploy slot, upgrade authority, code hash, Squads v4 multisig and
+    tracked proposals, and verified-build status, as JSONB
+  - Written only by `record_chain_transition`, which also inserts the resulting
+    `idl_changes` rows (with no IDL snapshot)
+
 - **auth_nonces**: Expiring, single-use wallet login challenges
 
-- **cron_locks**: Database leases for monitoring and notification workers
+- **cron_locks**: Database leases for monitoring, program-watch, and notification workers
 
 - **user_watchlist**: Programs users are subscribed to
   - Users receive notifications only for watched programs
@@ -108,13 +114,18 @@ Simply run `schema.sql` in your Supabase SQL Editor - this creates the entire da
 
 ### For Existing Deployments (Upgrading)
 
-Pause both schedulers, run all of [upgrade_reliability.sql](upgrade_reliability.sql)
+Pause all three schedulers, run all of [upgrade_reliability.sql](upgrade_reliability.sql)
 in the Supabase SQL Editor, deploy the matching application release, then resume
 the schedules. This transactional, repeatable upgrade is also included verbatim
 in `schema.sql`. It preserves existing rows, permits rollback versions, and adds
 atomic transition/nonce operations and bounded list/aggregate RPCs.
 It also adds the Discord notification channel; changes recorded before the
 upgrade are marked as already delivered for Discord so new webhooks start clean.
+The same applies to the signed-webhook and PagerDuty channels. The upgrade also
+creates `program_chain_states`, makes `idl_changes.new_snapshot_id` nullable for
+on-chain events, and adds the `list_chain_watch_targets` and
+`record_chain_transition` RPCs. The first program-watch run baselines every
+program without alerting.
 
 All application tables and RPCs are restricted to `service_role`. Wallet JWTs
 are verified by Next.js and do not establish Supabase Auth sessions. Public data

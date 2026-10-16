@@ -13,7 +13,21 @@ export type ChangeType =
   | "error_added"
   | "error_removed"
   | "error_modified"
-  | "idl_removed";
+  | "idl_removed"
+  | ProgramChangeType;
+
+/** On-chain events recorded by the program watcher, alongside IDL diffs. */
+export type ProgramChangeType =
+  | "program_upgraded"
+  | "program_closed"
+  | "upgrade_authority_changed"
+  | "program_made_immutable"
+  | "squads_config_changed"
+  | "squads_proposal_created"
+  | "squads_proposal_approved"
+  | "squads_proposal_cancelled"
+  | "verification_lost"
+  | "verification_gained";
 
 export type ChangeSeverity = "low" | "medium" | "high" | "critical";
 
