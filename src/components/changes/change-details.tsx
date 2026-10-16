@@ -5,6 +5,7 @@ import { Plus, Minus, Edit } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
 import { useTheme } from "@/lib/theme/theme-provider";
+import { changeCategory, changeTypeLabel } from "@/lib/changes/categories";
 
 // Dynamically import ReactDiffViewer to avoid SSR issues
 const ReactDiffViewer = dynamic(() => import("react-diff-viewer"), {
@@ -25,7 +26,9 @@ export function ChangeDetails({ details }: ChangeDetailsProps) {
   const { theme } = useTheme();
   const isAddition = details.changeType.includes("added");
   const isRemoval = details.changeType.includes("removed");
-  const isModification = details.changeType.includes("modified");
+  // On-chain events (upgrades, authority, proposals) carry before/after state objects.
+  const isModification =
+    details.changeType.includes("modified") || changeCategory(details.changeType) !== "idl";
   const [splitView, setSplitView] = useState(true);
 
   // Format values as pretty JSON strings for diff viewer
@@ -58,7 +61,7 @@ export function ChangeDetails({ details }: ChangeDetailsProps) {
       <div className="flex items-center space-x-2">
         {getChangeIcon()}
         <Badge variant={getChangeBadgeVariant()} className="text-xs">
-          {details.changeType.replace(/_/g, " ")}
+          {changeTypeLabel(details.changeType)}
         </Badge>
         <span className="text-sm font-medium">{details.itemName}</span>
       </div>
@@ -69,7 +72,7 @@ export function ChangeDetails({ details }: ChangeDetailsProps) {
       {/* Diff Viewer */}
       {(details.oldValue !== undefined || details.newValue !== undefined) && (
         <div className="space-y-3">
-          {isModification && oldValueStr && newValueStr ? (
+          {oldValueStr && newValueStr ? (
             // Enhanced diff view for modifications
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -147,16 +150,16 @@ export function ChangeDetails({ details }: ChangeDetailsProps) {
             // Single value display for additions/removals
             <div className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground">
-                {isAddition ? "Added Value" : "Removed Value"}
+                {isAddition ? "Added Value" : isRemoval ? "Removed Value" : "Details"}
               </div>
               <div className="overflow-hidden rounded-md border">
                 <div
-                  className={`p-3 ${isAddition ? "bg-green-50 dark:bg-green-950/30" : "bg-red-50 dark:bg-red-950/30"}`}
+                  className={`p-3 ${isRemoval ? "bg-red-50 dark:bg-red-950/30" : isAddition ? "bg-green-50 dark:bg-green-950/30" : "bg-muted"}`}
                 >
                   <pre
-                    className={`overflow-x-auto whitespace-pre-wrap font-mono text-xs ${isAddition ? "text-green-900 dark:text-green-100" : "text-red-900 dark:text-red-100"}`}
+                    className={`overflow-x-auto whitespace-pre-wrap font-mono text-xs ${isRemoval ? "text-red-900 dark:text-red-100" : isAddition ? "text-green-900 dark:text-green-100" : ""}`}
                   >
-                    {isAddition ? newValueStr : oldValueStr}
+                    {isRemoval ? oldValueStr : newValueStr || oldValueStr}
                   </pre>
                 </div>
               </div>

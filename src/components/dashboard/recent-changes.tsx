@@ -11,6 +11,7 @@ import {
 } from "@/lib/utils";
 import { ExternalLink, Clock, AlertCircle } from "lucide-react";
 import { useRecentChanges } from "@/hooks/use-changes";
+import { changeTypeLabel } from "@/lib/changes/categories";
 
 const LIMIT = 8;
 
@@ -90,7 +91,7 @@ export function RecentChanges() {
                         {change.monitored_programs?.name || "Unknown Program"}
                       </span>
                       <Badge variant="outline" className="text-xs">
-                        {change.change_type}
+                        {changeTypeLabel(change.change_type)}
                       </Badge>
                       <Badge
                         className={`text-xs ${

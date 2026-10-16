@@ -40,6 +40,8 @@ import {
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { useAuth } from "@/lib/auth/auth-context";
 import { AddToWatchlistButton } from "@/components/watchlist/add-to-watchlist-button";
+import { ProgramSecurityCard } from "./program-security";
+import { changeCategory, changeTypeLabel, CATEGORY_LABELS } from "@/lib/changes/categories";
 
 const SnapshotJson = dynamic(() => import("./snapshot-json"), {
   loading: () => <p>Loading viewer…</p>,
@@ -308,6 +310,8 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
         </CardContent>
       </Card>
 
+      <ProgramSecurityCard programId={program.id} explorer={preferredExplorer} />
+
       <div className="grid gap-6 md:grid-cols-2">
         {/* Recent Snapshots */}
         <Card>
@@ -406,7 +410,12 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
                     </div>
 
                     <div>
-                      <p className="text-sm font-medium">{change.change_type}</p>
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        {changeTypeLabel(change.change_type)}
+                        <Badge variant="outline" className="text-[10px] font-normal">
+                          {CATEGORY_LABELS[changeCategory(change.change_type)]}
+                        </Badge>
+                      </div>
                       <p className="text-xs text-muted-foreground">{change.change_summary}</p>
                     </div>
                   </div>

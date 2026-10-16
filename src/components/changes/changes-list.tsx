@@ -18,6 +18,7 @@ const LazyChangeDetails = dynamic(() => import("./lazy-change-details"), {
   loading: () => <p>Loading details…</p>,
 });
 import { useChanges } from "@/hooks/use-changes";
+import { changeTypeLabel } from "@/lib/changes/categories";
 
 interface ChangesListProps {
   programId?: string;
@@ -178,8 +179,8 @@ export function ChangesList({ programId }: ChangesListProps) {
                 <h3 className="mb-2 text-lg font-medium">No changes detected yet</h3>
                 <p className="text-muted-foreground">
                   {programId
-                    ? "IDL changes for this program will appear here once detected"
-                    : "IDL changes will appear here once your programs are monitored"}
+                    ? "Changes to this program will appear here once detected"
+                    : "Changes will appear here once your programs are monitored"}
                 </p>
               </div>
             ) : (
@@ -213,7 +214,7 @@ export function ChangesList({ programId }: ChangesListProps) {
                             {change.monitored_programs?.name || "Unknown Program"}
                           </h3>
                           <Badge variant="outline" className="text-xs">
-                            {change.change_type}
+                            {changeTypeLabel(change.change_type)}
                           </Badge>
                           <Badge
                             className={`text-xs ${

@@ -114,7 +114,7 @@ export function ProgramsList() {
               <div>
                 <h3 className="mb-2 text-lg font-medium">No programs monitored yet</h3>
                 <p className="mb-6 text-muted-foreground">
-                  Start monitoring the first Solana program for IDL changes
+                  Start monitoring the first Solana program for changes
                 </p>
                 <Link href="/programs/new">
                   <Button className="flex items-center space-x-2">

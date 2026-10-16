@@ -5,6 +5,7 @@ export const queryKeys = {
   programDetail: (id: string) => [...queryKeys.programs, "detail", id] as const,
   programSnapshots: (id: string) => [...queryKeys.programs, id, "snapshots"] as const,
   programChanges: (id: string) => [...queryKeys.programs, id, "changes"] as const,
+  programChain: (id: string) => [...queryKeys.programs, id, "chain"] as const,
 
   // Changes
   changes: ["changes"] as const,
