@@ -239,3 +239,44 @@ test("private query caches are partitioned by user", async () => {
   assert.equal(client.getQueryData(queryKeys.watchlistFor("bob")), undefined);
   client.clear();
 });
+
+test("Codama IDLs (SPL Token) convert to diffable IDLs; docs edits do not change the hash", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { codamaToIdl, isCodamaRoot } = await import("../src/lib/solana/codama");
+  const root = JSON.parse(readFileSync("tests/fixtures/spl-token-codama-idl.json", "utf8"));
+  assert.equal(isCodamaRoot(root), true);
+  const idl = codamaToIdl(root);
+  assert.equal(idl.name, "token");
+  assert.equal(idl.address, "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  assert.equal(idl.instructions.length, 28);
+  const transfer = idl.instructions.find((i) => i.name === "transfer")!;
+  assert.deepEqual(
+    transfer.args.map((a) => a.name),
+    ["amount"]
+  );
+  assert.deepEqual(transfer.discriminator, [
+    { field: "discriminator", offset: 0, value: { kind: "numberValueNode", number: 3 } },
+  ]);
+  assert.equal(idl.accounts?.find((a) => a.name === "mint")?.type?.fields.length, 5);
+  assert.equal(idl.errors?.[0].msg, "Lamport balance below rent-exempt threshold");
+
+  const reworded = structuredClone(root);
+  reworded.program.instructions[3].docs = ["Rewritten documentation"];
+  reworded.program.accounts[0].data.fields[0].docs = ["Changed"];
+  assert.equal(calculateIdlHash(codamaToIdl(reworded)), calculateIdlHash(idl));
+
+  const retyped = structuredClone(root);
+  const amount = retyped.program.instructions
+    .find((i: { name: string }) => i.name === "transfer")
+    .arguments.find((a: { name: string }) => a.name === "amount");
+  amount.type = { kind: "numberTypeNode", format: "u128", endian: "le" };
+  const changes = detectChanges(idl, codamaToIdl(retyped));
+  assert.deepEqual(
+    changes.map((c) => [c.changeType, c.severity]),
+    [["instruction_modified", "high"]]
+  );
+
+  const resigned = structuredClone(root);
+  resigned.program.instructions[3].discriminators = [];
+  assert.equal(detectChanges(idl, codamaToIdl(resigned))[0].severity, "critical");
+});

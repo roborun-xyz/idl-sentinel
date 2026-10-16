@@ -2,6 +2,8 @@ import { Connection, PublicKey, AccountInfo, type ConnectionConfig } from "@sola
 import { inflate, ungzip } from "pako";
 import bs58 from "bs58";
 import { fetchWithTimeout } from "../http";
+import { codamaToIdl, isCodamaRoot } from "./codama";
+import { decodeProgramAccount, decodeProgramData, PROGRAM_DATA_HEADER } from "../chain/loaders";
 
 export interface IdlAccount {
   authority: PublicKey;
@@ -243,9 +245,19 @@ async function fetchProgramMetadataIdl(
   }
 
   const accounts = await findProgramMetadataIdlAccounts(connection, programPubkey);
+  // Anyone can publish non-canonical metadata for any program. Prefer the IDL
+  // written by the program's own upgrade authority; others are a fallback.
+  const authority = await upgradeAuthorityOf(connection, programPubkey);
+  const writtenBy = (account: AccountInfo<Buffer>) =>
+    account.data.length >= 65 ? new PublicKey(account.data.subarray(33, 65)).toBase58() : null;
   const candidates = accounts
     .filter(({ pubkey }) => !pubkey.equals(canonicalAddress))
-    .sort((a, b) => a.pubkey.toBase58().localeCompare(b.pubkey.toBase58()));
+    .sort(
+      (a, b) =>
+        Number(!!authority && writtenBy(b.account) === authority) -
+          Number(!!authority && writtenBy(a.account) === authority) ||
+        a.pubkey.toBase58().localeCompare(b.pubkey.toBase58())
+    );
 
   for (const { pubkey, account } of candidates) {
     const idl = await parseProgramMetadataIdl(connection, pubkey, account, programPubkey, signal);
@@ -256,6 +268,26 @@ async function fetchProgramMetadataIdl(
   }
 
   return null;
+}
+
+/** The upgradeable loader's current upgrade authority, or null (immutable, other loaders, errors). */
+async function upgradeAuthorityOf(connection: Connection, programPubkey: PublicKey) {
+  try {
+    const program = decodeProgramAccount(
+      toRawAccount(await connection.getAccountInfo(programPubkey))
+    );
+    if (!program.programDataAddress) return program.upgradeAuthority;
+    const header = await connection.getAccountInfo(new PublicKey(program.programDataAddress), {
+      dataSlice: { offset: 0, length: PROGRAM_DATA_HEADER },
+    });
+    return decodeProgramData(program, toRawAccount(header)).upgradeAuthority;
+  } catch {
+    return null;
+  }
+}
+
+function toRawAccount(info: AccountInfo<Buffer> | null) {
+  return info ? { owner: info.owner.toBase58(), data: info.data } : null;
 }
 
 async function findProgramMetadataIdlAccounts(
@@ -529,6 +561,7 @@ function decodeProgramMetadataSeed(seedBytes: Buffer): string {
 
 function normalizeFetchedIdl(value: unknown, programId: string): SolanaIdl {
   if (!value || typeof value !== "object") throw new Error("IDL must be an object");
+  if (isCodamaRoot(value)) value = codamaToIdl(value);
   const raw = value as Partial<SolanaIdl>;
   const idl = {
     ...raw,
