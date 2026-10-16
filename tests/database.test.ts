@@ -301,3 +301,164 @@ test("polling traverses a registry larger than the API row cap and preserves pro
   );
   assert.equal(rows[0].n, 1105);
 });
+
+async function chainTransition(
+  id: string,
+  expected: string | null,
+  hash: string,
+  changes: unknown[] = []
+) {
+  const { rows } = await db.query<{ result: { created: boolean; changes_count: number } }>(
+    "SELECT record_chain_transition($1, $2, $3, $4, $5) result",
+    [id, expected, hash, JSON.stringify({ deploySlot: hash }), JSON.stringify(changes)]
+  );
+  return rows[0].result;
+}
+
+test("chain transitions baseline, dedupe, refuse stale writers, and emit snapshot-less changes", async () => {
+  const id = await program();
+  assert.deepEqual(await chainTransition(id, null, "S1"), { created: true, changes_count: 0 });
+  assert.deepEqual(await chainTransition(id, "S1", "S1"), { created: false, changes_count: 0 });
+  // Same comparable hash still saves refreshed bookkeeping in the state body.
+  await db.query("SELECT record_chain_transition($1, 'S1', 'S1', $2, '[]')", [
+    id,
+    JSON.stringify({ deploySlot: "S1", authorityProbedAt: "2026-10-16T00:00:00Z" }),
+  ]);
+  const saved = await db.query<{ probed: string }>(
+    "SELECT state->>'authorityProbedAt' probed FROM program_chain_states WHERE program_id = $1",
+    [id]
+  );
+  assert.equal(saved.rows[0].probed, "2026-10-16T00:00:00Z");
+  const upgrade = {
+    changeType: "program_upgraded",
+    changeSummary: "Program 'Test' was upgraded at slot 2",
+    changeDetails: { changeType: "program_upgraded", itemName: "Test", description: "x" },
+    severity: "high",
+  };
+  const results = await Promise.allSettled([
+    chainTransition(id, "S1", "S2", [upgrade]),
+    chainTransition(id, "S1", "S3", [upgrade]),
+  ]);
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  assert.match(
+    String((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason),
+    /changed during comparison/
+  );
+  const rows = await db.query<{
+    change_type: string;
+    new_snapshot_id: string | null;
+    slack_notified: boolean;
+  }>("SELECT change_type, new_snapshot_id, slack_notified FROM idl_changes WHERE program_id = $1", [
+    id,
+  ]);
+  assert.deepEqual(rows.rows, [
+    { change_type: "program_upgraded", new_snapshot_id: null, slack_notified: false },
+  ]);
+  const listed = await db.query<{ change_type: string }>(
+    "SELECT change_type FROM list_change_summaries(10, NULL, NULL, $1)",
+    [id]
+  );
+  assert.deepEqual(listed.rows, [{ change_type: "program_upgraded" }]);
+  await assert.rejects(chainTransition(randomUUID(), null, "S1"), /Program not found/);
+});
+
+test("watch targets are active programs in cursor order, and the cursor keeps edit times", async () => {
+  const [a, b, c] = [await program(), await program(), await program()];
+  await db.query("UPDATE monitored_programs SET is_active = false WHERE id = $1", [c]);
+  // Other tests register more programs than one page holds; park them behind ours.
+  await db.query(
+    "UPDATE monitored_programs SET chain_checked_at = NOW() + INTERVAL '1 day' WHERE id <> ALL($1::uuid[])",
+    [[a, b, c]]
+  );
+  await db.query("UPDATE monitored_programs SET chain_checked_at = NOW() WHERE id = $1", [a]);
+  const before = await db.query<{ updated_at: string }>(
+    "SELECT updated_at FROM monitored_programs WHERE id = $1",
+    [a]
+  );
+  await chainTransition(a, null, "S1");
+  const after = await db.query<{ updated_at: string; chain_checked_at: string }>(
+    "SELECT updated_at, chain_checked_at FROM monitored_programs WHERE id = $1",
+    [a]
+  );
+  assert.equal(String(after.rows[0].updated_at), String(before.rows[0].updated_at));
+  const targets = await db.query<{ id: string; state_hash: string | null }>(
+    "SELECT id, state_hash FROM list_chain_watch_targets(1000)"
+  );
+  const ids = targets.rows.map((r) => r.id);
+  assert.ok(!ids.includes(c));
+  assert.deepEqual(ids.slice(0, 2), [b, a], "never-checked programs come first");
+  assert.equal(targets.rows.find((r) => r.id === a)?.state_hash, "S1");
+});
+
+test("webhook and pagerduty channels backfill old changes and accept receipts", async () => {
+  const legacy = new PGlite({ extensions: { uuid_ossp } });
+  try {
+    await legacy.exec("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;");
+    await legacy.exec(schema.slice(0, schema.indexOf("-- Apply before deploying")));
+    const id = randomUUID();
+    await legacy.query("INSERT INTO monitored_programs(id, program_id, name) VALUES($1, $2, 'L')", [
+      id,
+      id,
+    ]);
+    const snap = await legacy.query<{ id: string }>(
+      "INSERT INTO idl_snapshots(program_id, idl_hash, idl_content) VALUES($1, 'A', '{}') RETURNING id",
+      [id]
+    );
+    const insert = (summary: string) =>
+      legacy.query(
+        "INSERT INTO idl_changes(program_id, new_snapshot_id, change_type, change_summary, change_details, severity) VALUES($1, $2, 'type_added', $3, '{}', 'low')",
+        [id, snap.rows[0].id, summary]
+      );
+    await insert("old");
+    await legacy.exec(upgrade);
+    await legacy.exec(upgrade);
+    await insert("new");
+    const rows = await legacy.query<{
+      change_summary: string;
+      webhook_notified: boolean;
+      pagerduty_notified: boolean;
+    }>(
+      "SELECT change_summary, webhook_notified, pagerduty_notified FROM idl_changes ORDER BY change_summary DESC"
+    );
+    assert.deepEqual(rows.rows, [
+      { change_summary: "old", webhook_notified: true, pagerduty_notified: true },
+      { change_summary: "new", webhook_notified: false, pagerduty_notified: false },
+    ]);
+    const user = await legacy.query<{ id: string; pagerduty_min_severity: string }>(
+      "INSERT INTO users(wallet_address) VALUES('w') RETURNING id, pagerduty_min_severity"
+    );
+    assert.equal(user.rows[0].pagerduty_min_severity, "high");
+    const changeId = (
+      await legacy.query<{ id: string }>("SELECT id FROM idl_changes WHERE change_summary = 'new'")
+    ).rows[0].id;
+    for (const channel of ["webhook", "pagerduty"]) {
+      await legacy.query(
+        "SELECT record_notification_delivery($1, $2, ARRAY[$3]::uuid[], 'delivered')",
+        [channel, user.rows[0].id, changeId]
+      );
+    }
+    await assert.rejects(
+      legacy.query("UPDATE users SET pagerduty_min_severity = 'urgent'"),
+      /violates check constraint/
+    );
+  } finally {
+    await legacy.close();
+  }
+});
+
+test("chain state and integration secrets stay private to the server role", async () => {
+  for (const role of ["anon", "authenticated"]) {
+    await db.exec(`SET ROLE ${role}`);
+    try {
+      for (const query of [
+        "SELECT * FROM program_chain_states",
+        "SELECT webhook_secret, pagerduty_routing_key FROM users",
+        "SELECT * FROM list_chain_watch_targets(10)",
+        `SELECT record_chain_transition('${randomUUID()}', NULL, 'x', '{}', '[]')`,
+      ])
+        await assert.rejects(db.exec(query), /permission denied/);
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+  }
+});
