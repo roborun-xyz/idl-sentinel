@@ -5,12 +5,17 @@ export type NotificationChange = Pick<
   IdlChange,
   "id" | "severity" | "change_summary" | "detected_at"
 > & {
+  change_type?: string;
   monitored_programs: { id: string; name: string; program_id: string };
 };
 export interface Watcher {
   userId: string;
   walletAddress: string;
   destination: string;
+  /** HMAC key for signed webhooks. */
+  secret?: string | null;
+  /** Lowest severity that pages (PagerDuty). */
+  minSeverity?: IdlChange["severity"];
 }
 export interface DeliveryState {
   delivered: Map<string, Set<string>>;

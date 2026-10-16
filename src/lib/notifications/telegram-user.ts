@@ -13,6 +13,7 @@ import {
   highestSeverity,
   truncateSummary,
 } from "./format";
+import { alertNoun } from "../changes/categories";
 
 const TELEGRAM_API_TIMEOUT_MS = 10_000;
 
@@ -90,7 +91,7 @@ export function formatTelegramMessage(
     : `<b>${safeName}</b>`;
 
   const header = [
-    `${SEVERITY_EMOJI[severity]} <b>IDL change detected</b>`,
+    `${SEVERITY_EMOJI[severity]} <b>${alertNoun(changes.map((c) => c.change_type))} detected</b>`,
     "",
     `📋 <b>Program:</b> ${programLabel}`,
     `🔗 <b>Address:</b> <code>${programId}</code>`,
@@ -162,7 +163,7 @@ export async function testTelegramConfig(chatId: string): Promise<boolean> {
       return false;
     }
 
-    const testMessage = `🧪 <b>IDL Sentinel Test</b>\n\nYour Telegram account is connected. IDL change alerts for programs in your watchlist will arrive here.\n\n⏰ <b>Sent:</b> ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`;
+    const testMessage = `🧪 <b>IDL Sentinel Test</b>\n\nYour Telegram account is connected. Change alerts for programs in your watchlist will arrive here.\n\n⏰ <b>Sent:</b> ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`;
 
     const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 

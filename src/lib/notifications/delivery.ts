@@ -10,15 +10,29 @@ interface WatcherRow {
     slack_webhook_url: string | null;
     discord_webhook_url: string | null;
     telegram_chat_id: string | null;
+    webhook_url: string | null;
+    webhook_secret: string | null;
+    pagerduty_routing_key: string | null;
+    pagerduty_min_severity: Watcher["minSeverity"] | null;
   };
 }
 
-export type NotificationChannel = "slack" | "telegram_user" | "discord";
+export type NotificationChannel = "slack" | "telegram_user" | "discord" | "webhook" | "pagerduty";
+
+export const NOTIFICATION_CHANNELS: NotificationChannel[] = [
+  "slack",
+  "telegram_user",
+  "discord",
+  "webhook",
+  "pagerduty",
+];
 
 const destinationField: Record<NotificationChannel, keyof WatcherRow["users"]> = {
   slack: "slack_webhook_url",
   telegram_user: "telegram_chat_id",
   discord: "discord_webhook_url",
+  webhook: "webhook_url",
+  pagerduty: "pagerduty_routing_key",
 };
 
 // Always walk a stable cursor: no dependence on the Data API's response row cap.
@@ -49,7 +63,7 @@ export function notificationStore(
       const { data, error } = await supabaseAdmin
         .from("idl_changes")
         .select(
-          "id, severity, change_summary, detected_at, monitored_programs!inner(id, name, program_id)"
+          "id, change_type, severity, change_summary, detected_at, monitored_programs!inner(id, name, program_id)"
         )
         .eq(`${channel}_notified`, false)
         .lte(`${channel}_retry_at`, new Date().toISOString())
@@ -67,7 +81,7 @@ export function notificationStore(
           let query = supabaseAdmin
             .from("user_watchlist")
             .select(
-              "id, program_id, users!inner(id, wallet_address, slack_webhook_url, discord_webhook_url, telegram_chat_id)"
+              "id, program_id, users!inner(id, wallet_address, slack_webhook_url, discord_webhook_url, telegram_chat_id, webhook_url, webhook_secret, pagerduty_routing_key, pagerduty_min_severity)"
             )
             .in("program_id", programIds.slice(i, i + 50))
             .not(`users.${field}`, "is", null)
@@ -83,6 +97,8 @@ export function notificationStore(
             userId: row.users.id,
             walletAddress: row.users.wallet_address,
             destination: row.users[field] as string,
+            secret: row.users.webhook_secret,
+            minSeverity: row.users.pagerduty_min_severity ?? "high",
           });
           result.set(row.program_id, watchers);
         }

@@ -13,6 +13,7 @@ import {
   highestSeverity,
   truncateSummary,
 } from "./format";
+import { alertNoun } from "../changes/categories";
 
 const SLACK_WEBHOOK_TIMEOUT_MS = 10_000;
 
@@ -71,6 +72,7 @@ export function formatSlackMessage(
 
   const severity = highestSeverity(changes);
   const summary = describeChangeCount(changes);
+  const noun = alertNoun(changes.map((change) => change.change_type));
   const programLabel = programUrl ? `<${programUrl}|${safeName}>` : safeName;
 
   const blocks: Array<Record<string, unknown>> = [
@@ -78,7 +80,7 @@ export function formatSlackMessage(
       type: "header",
       text: {
         type: "plain_text",
-        text: `${SEVERITY_EMOJI[severity]} IDL change: ${programName}`.slice(0, 150),
+        text: `${SEVERITY_EMOJI[severity]} ${noun}: ${programName}`.slice(0, 150),
         emoji: true,
       },
     },
@@ -116,7 +118,11 @@ export function formatSlackMessage(
       elements: [
         {
           type: "button",
-          text: { type: "plain_text", text: "View diff in IDL Sentinel", emoji: true },
+          text: {
+            type: "plain_text",
+            text: noun === "IDL change" ? "View diff in IDL Sentinel" : "View in IDL Sentinel",
+            emoji: true,
+          },
           url: programUrl,
         },
       ],
@@ -163,7 +169,7 @@ export async function testSlackWebhook(webhookUrl: string): Promise<boolean> {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `Your Slack webhook is connected. IDL change alerts for programs in your watchlist will arrive in this channel.\n\n*Sent:* ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
+            text: `Your Slack webhook is connected. Change alerts for programs in your watchlist will arrive in this channel.\n\n*Sent:* ${new Date().toISOString().replace("T", " ").slice(0, 19)} UTC`,
           },
         },
       ],

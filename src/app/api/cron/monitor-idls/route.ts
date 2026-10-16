@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { monitorPrograms } from "@/lib/monitoring/monitor";
-import { runNotificationJobs } from "@/lib/cron/notifications";
+import { notificationErrors, runNotificationJobs } from "@/lib/cron/notifications";
 import { cleanupExpiredTokens } from "@/lib/telegram/connection-tokens";
 import { acquireCronLock, releaseCronLock } from "@/lib/cron/lock";
 import { generateUUID } from "@/lib/utils";
@@ -49,19 +49,17 @@ export async function GET(request: NextRequest) {
     // Run the monitoring process
     const result = await monitorPrograms();
 
-    const { slack: slackResult, telegram_user: telegramUserResult } = await runNotificationJobs();
+    const notifications = await runNotificationJobs();
 
     // Clean up expired Telegram connection tokens
     await cleanupExpiredTokens();
 
     console.log("Scheduled monitoring completed:", result);
-    console.log("Slack notification result:", slackResult);
-    console.log("Telegram user notification result:", telegramUserResult);
+    console.log("Notification results:", notifications);
 
     const errors = [
       ...result.errors.map((error) => `monitoring:${error.programId}:${error.error}`),
-      ...slackResult.errors.map((error) => `slack:${error}`),
-      ...telegramUserResult.errors.map((error) => `telegram_user:${error}`),
+      ...notificationErrors(notifications),
     ];
     const success = errors.length === 0;
 
@@ -72,10 +70,7 @@ export async function GET(request: NextRequest) {
           ? "IDL monitoring and notifications completed"
           : "IDL monitoring and notifications completed with errors",
         result,
-        notifications: {
-          telegram_user: telegramUserResult,
-          slack: slackResult,
-        },
+        notifications,
         errors,
       },
       { status: success ? 200 : 500 }
