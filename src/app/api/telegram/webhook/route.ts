@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
         chatId,
         `✅ *Successfully connected!*\n\n` +
           `Your Telegram is now linked to wallet: \`${walletShort}\`\n\n` +
-          `You'll receive notifications here when programs in your watchlist have IDL changes.\n\n` +
+          `You'll receive notifications here when programs in your watchlist change.\n\n` +
           `🔔 Manage your watchlist at: ${process.env.NEXT_PUBLIC_APP_URL || "https://idl-sentinel.com"}/settings`
       );
 
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
         botToken,
         chatId,
         `🤖 *IDL Sentinel Bot*\n\n` +
-          `This bot sends you notifications when Solana programs in your watchlist have IDL changes.\n\n` +
+          `This bot sends you notifications when Solana programs in your watchlist change: IDL diffs, upgrades, authority, and multisig proposals.\n\n` +
           `*Commands:*\n` +
           `/start <token> - Connect your account\n` +
           `/status - Check connection status\n` +

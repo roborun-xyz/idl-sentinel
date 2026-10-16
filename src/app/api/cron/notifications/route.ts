@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runNotificationJobs } from "@/lib/cron/notifications";
+import { notificationErrors, runNotificationJobs } from "@/lib/cron/notifications";
 import { cleanupNonces } from "@/lib/auth/nonces";
 import { cleanupExpiredTokens } from "@/lib/telegram/connection-tokens";
 
@@ -12,11 +12,7 @@ export async function GET(request: NextRequest) {
   try {
     const notifications = await runNotificationJobs();
     await Promise.all([cleanupNonces(), cleanupExpiredTokens()]);
-    const errors = [
-      ...notifications.slack.errors,
-      ...notifications.telegram_user.errors,
-      ...notifications.discord.errors,
-    ];
+    const errors = notificationErrors(notifications);
     return NextResponse.json(
       { success: !errors.length, notifications, errors },
       { status: errors.length ? 500 : 200 }

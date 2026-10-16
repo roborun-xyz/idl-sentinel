@@ -13,6 +13,7 @@ import {
   latestDetectedAt,
   truncateSummary,
 } from "./format";
+import { alertNoun } from "../changes/categories";
 import type { ChangeSeverity } from "../db/changes";
 
 const DISCORD_WEBHOOK_TIMEOUT_MS = 10_000;
@@ -80,6 +81,7 @@ export function formatDiscordMessage(
   }
 
   const severity = highestSeverity(changes);
+  const noun = alertNoun(changes.map((change) => change.change_type));
   const fields = groupBySeverity(changes).map((group) => {
     const lines = group.changes
       .slice(0, MAX_CHANGES_PER_SEVERITY)
@@ -104,7 +106,9 @@ export function formatDiscordMessage(
     fields,
     timestamp: latestDetectedAt(changes).toISOString(),
     footer: {
-      text: programUrl ? "IDL Sentinel · click the title to view the diff" : "IDL Sentinel",
+      text: programUrl
+        ? `IDL Sentinel · click the title to view ${noun === "IDL change" ? "the diff" : "details"}`
+        : "IDL Sentinel",
     },
   };
   if (programUrl) embed.url = programUrl;
@@ -140,7 +144,7 @@ export async function testDiscordWebhook(webhookUrl: string): Promise<boolean> {
     embeds: [
       {
         title: "🧪 IDL Sentinel test",
-        description: `Your Discord webhook is connected. IDL change alerts for programs in your watchlist will arrive in this channel.\n\n**Sent:** ${sent} UTC`,
+        description: `Your Discord webhook is connected. Change alerts for programs in your watchlist will arrive in this channel.\n\n**Sent:** ${sent} UTC`,
         color: 0x3b82f6,
       },
     ],
