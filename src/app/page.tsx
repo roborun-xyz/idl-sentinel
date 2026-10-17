@@ -1,5 +1,5 @@
 import { Layout } from "@/components/layout/layout";
-import { StatsCards } from "@/components/dashboard/stats-cards";
+import { StatusOverview } from "@/components/dashboard/status-overview";
 import { RecentChanges } from "@/components/dashboard/recent-changes";
 import { MonitoredPrograms } from "@/components/dashboard/monitored-programs";
 import {
@@ -28,8 +28,8 @@ export default function Home() {
         <Hero />
 
         <section className="space-y-6">
-          <StatsCards />
-          <div className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+          <StatusOverview />
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <RecentChanges />
             <MonitoredPrograms />
           </div>
