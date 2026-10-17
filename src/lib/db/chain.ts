@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "../supabase";
 import type { ChainState } from "../chain/state";
+import { summarizeChain, type ChainSummary } from "../chain/risk";
 import type { ChainStore, WatchTarget } from "../chain/watch";
 
 export interface ProgramChainStateRow {
@@ -20,6 +21,24 @@ export async function getProgramChainState(
     .maybeSingle();
   if (error) throw new Error(`Failed to fetch chain state: ${error.message}`);
   return data;
+}
+
+/** Compact on-chain summaries for list rows, keyed by program row id. */
+export async function getChainSummaries(
+  programDbIds: string[]
+): Promise<Record<string, ChainSummary>> {
+  if (!programDbIds.length) return {};
+  const { data, error } = await supabaseAdmin
+    .from("program_chain_states")
+    .select("program_id, state, checked_at")
+    .in("program_id", programDbIds);
+  if (error) throw new Error(`Failed to fetch chain states: ${error.message}`);
+  return Object.fromEntries(
+    (data || []).map((row: { program_id: string; state: ChainState; checked_at: string }) => [
+      row.program_id,
+      summarizeChain(row.state, row.checked_at),
+    ])
+  );
 }
 
 export function chainStore(runId: string): ChainStore {

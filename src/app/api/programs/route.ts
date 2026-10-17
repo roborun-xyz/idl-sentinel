@@ -3,6 +3,7 @@ import { getAllPrograms, createProgram, getProgramCount } from "@/lib/db/program
 import { isValidProgramId } from "@/lib/utils";
 import { fetchInitialIdl } from "@/lib/monitoring/monitor";
 import { getAuthUser } from "@/lib/auth/middleware";
+import { getChainSummaries } from "@/lib/db/chain";
 
 export async function GET(request: NextRequest) {
   try {
@@ -47,8 +48,15 @@ export async function GET(request: NextRequest) {
       getProgramCount({ activeOnly, search }),
     ]);
 
+    // List rows carry a compact on-chain summary for their risk badges. A failure
+    // here costs the badges, not the list.
+    const chain = await getChainSummaries(programs.map((p) => p.id)).catch((error) => {
+      console.error("Error fetching chain summaries:", error);
+      return {} as Awaited<ReturnType<typeof getChainSummaries>>;
+    });
+
     return NextResponse.json({
-      programs,
+      programs: programs.map((program) => ({ ...program, chain: chain[program.id] ?? null })),
       pagination: {
         total: totalCount,
         limit: parsedLimit || totalCount,

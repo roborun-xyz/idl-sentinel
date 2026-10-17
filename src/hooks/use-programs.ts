@@ -3,9 +3,12 @@ import { queryKeys } from "./query-keys";
 import type { MonitoredProgram, IdlSnapshot } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth/auth-context";
 import type { ProgramChainStateRow } from "@/lib/db/chain";
+import type { ChainSummary } from "@/lib/chain/risk";
+
+export type ProgramListItem = MonitoredProgram & { chain: ChainSummary | null };
 
 interface ProgramsResponse {
-  programs: MonitoredProgram[];
+  programs: ProgramListItem[];
   pagination: {
     total: number;
     limit: number;
