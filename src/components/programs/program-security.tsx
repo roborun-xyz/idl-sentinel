@@ -1,13 +1,24 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { ProgramChainStateRow } from "@/lib/db/chain";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime, getExplorerUrl, type SolanaExplorer } from "@/lib/utils";
-import { useProgramChain } from "@/hooks/use-programs";
 import { isOpenProposal } from "@/lib/chain/proposal-status";
+import { codeControl, summarizeChain, timelockText, type CodeControl } from "@/lib/chain/risk";
+
+const CODE_LABELS: Record<CodeControl, React.ReactNode> = {
+  closed: <Badge variant="destructive">Closed</Badge>,
+  missing: <Badge variant="destructive">Not found</Badge>,
+  retracted: <Badge variant="secondary">Retracted</Badge>,
+  immutable: "Immutable",
+  multisig: "Upgradeable",
+  upgradeable: "Upgradeable",
+  native: "Native program",
+  unknown: "Not a program account",
+};
 import { currentVerification } from "@/lib/chain/verification-status";
 import type { ChainState, TrackedProposal } from "@/lib/chain/state";
 import {
@@ -21,13 +32,6 @@ import {
 } from "lucide-react";
 
 const short = (value: string, size = 4) => `${value.slice(0, size)}…${value.slice(-size)}`;
-
-function duration(seconds: number): string {
-  if (seconds <= 0) return "no timelock";
-  if (seconds % 86_400 === 0) return `${seconds / 86_400}d timelock`;
-  if (seconds % 3_600 === 0) return `${seconds / 3_600}h timelock`;
-  return `${Math.round(seconds / 60)}m timelock`;
-}
 
 /** Local time with UTC alongside, e.g. "Oct 15, 6:34 PM (16:34 UTC)". */
 function bothTimes(seconds: number): string {
@@ -70,9 +74,9 @@ function Address({ value, explorer }: { value: string; explorer: SolanaExplorer 
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-sm font-medium text-muted-foreground">{label}</div>
-      <div className="mt-1 text-sm">{children}</div>
+    <div className="space-y-1 py-3 first:pt-0 last:pb-0">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="text-sm">{children}</dd>
     </div>
   );
 }
@@ -145,12 +149,18 @@ function ProposalRow({
   return (
     <li
       className={`flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm ${
-        approved ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30" : ""
+        ready
+          ? "border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/40"
+          : approved
+            ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30"
+            : ""
       }`}
     >
       <span className="flex items-center gap-2 font-medium">
-        {approved && <AlertTriangle className="h-4 w-4 text-amber-600" />}#{proposal.index} ·{" "}
-        {actionText(proposal)}
+        {approved && (
+          <AlertTriangle className={`h-4 w-4 ${ready ? "text-red-600" : "text-amber-600"}`} />
+        )}
+        #{proposal.index} · {actionText(proposal)}
       </span>
       <span className="text-muted-foreground">
         {proposal.status === "none" ? "awaiting proposal" : proposal.status} · {proposal.approvals}/
@@ -166,58 +176,74 @@ function ProposalRow({
   );
 }
 
-export function ProgramSecurityCard({
-  programId,
+interface FactsProgram {
+  program_id: string;
+  is_active: boolean;
+  created_at: string;
+  last_checked_at?: string | null;
+}
+
+/**
+ * The scannable fact column (deps.dev / GitHub Advisory style): identifiers,
+ * who controls the code, and when we last looked.
+ */
+export function ProgramFacts({
+  program,
+  chain,
+  chainLoading,
+  chainError,
   explorer,
 }: {
-  programId: string;
+  program: FactsProgram;
+  chain: ProgramChainStateRow | null | undefined;
+  chainLoading: boolean;
+  chainError: boolean;
   explorer: SolanaExplorer;
 }) {
-  // The fetch time, not render time, decides "executable now"; it refreshes every minute.
-  const { data, isLoading, isError, dataUpdatedAt } = useProgramChain(programId);
-  const row = data?.chain;
-  const state = row?.state;
-  const open = state?.squads?.proposals.filter((p) => isOpenProposal(p.status)) ?? [];
-
+  const state = chain?.state;
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5" />
-          On-chain security
-        </CardTitle>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Details</CardTitle>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
-        ) : isError ? (
-          <p className="text-sm text-muted-foreground">On-chain state is unavailable right now.</p>
-        ) : !state ? (
-          <p className="text-sm text-muted-foreground">
-            Not checked yet. The program watcher reads deploys, upgrade authority, and multisig
-            proposals every five minutes.
-          </p>
-        ) : (
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2">
+        <dl className="divide-y">
+          <Field label="Program ID">
+            <Address value={program.program_id} explorer={explorer} />
+          </Field>
+          {state && (
+            <>
               <Field label="Code">
-                {state.status === "closed" ? (
-                  <Badge variant="destructive">Closed</Badge>
-                ) : state.status === "retracted" ? (
-                  <Badge variant="secondary">Retracted (redeploy in progress?)</Badge>
-                ) : state.upgradeAuthority ? (
-                  <Badge className="bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">
-                    Upgradeable
-                  </Badge>
-                ) : (
-                  <Badge className="bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
-                    Immutable
-                  </Badge>
-                )}
+                {CODE_LABELS[codeControl(summarizeChain(state, chain!.checked_at))]}
                 <span className="ml-2 text-xs text-muted-foreground">{state.loader} loader</span>
+              </Field>
+              <Field label="Upgrade authority">
+                {state.upgradeAuthority ? (
+                  <div className="space-y-1">
+                    <Address value={state.upgradeAuthority} explorer={explorer} />
+                    <div className="text-xs text-muted-foreground">
+                      {state.squads ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3.5 w-3.5" />
+                          Squads v4 vault · {state.squads.threshold} of{" "}
+                          {state.squads.members.length} · {timelockText(state.squads.timeLock)}
+                        </span>
+                      ) : (
+                        "Single key or another program"
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground">None</span>
+                )}
+              </Field>
+              {state.squads && (
+                <Field label="Multisig">
+                  <Address value={state.squads.multisig} explorer={explorer} />
+                </Field>
+              )}
+              <Field label="Verified build">
+                <VerificationBadge state={state} />
               </Field>
               <Field label="Last deployed">
                 {state.deployedAt ? (
@@ -232,29 +258,6 @@ export function ProgramSecurityCard({
                     slot {state.deploySlot.toLocaleString()}
                   </span>
                 )}
-              </Field>
-              <Field label="Upgrade authority">
-                {state.upgradeAuthority ? (
-                  <div className="space-y-1">
-                    <Address value={state.upgradeAuthority} explorer={explorer} />
-                    <div className="text-xs text-muted-foreground">
-                      {state.squads ? (
-                        <span className="inline-flex items-center gap-1">
-                          <Users className="h-3.5 w-3.5" />
-                          Squads v4 vault · {state.squads.threshold} of{" "}
-                          {state.squads.members.length} · {duration(state.squads.timeLock)}
-                        </span>
-                      ) : (
-                        "Single key or another program (no Squads v4 multisig found)"
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <span className="text-muted-foreground">None. No one can change this code.</span>
-                )}
-              </Field>
-              <Field label="Verified build">
-                <VerificationBadge state={state} />
               </Field>
               {state.codeHash && (
                 <Field label="Code hash (SHA-256)">
@@ -272,49 +275,63 @@ export function ProgramSecurityCard({
                   </span>
                 </Field>
               )}
-              {state.squads && (
-                <Field label="Multisig">
-                  <Address value={state.squads.multisig} explorer={explorer} />
-                </Field>
-              )}
+            </>
+          )}
+          {!state && !chainLoading && (
+            <Field label="On-chain state">
+              <span className="text-muted-foreground">
+                {chainError ? "Unavailable right now" : "Not checked yet"}
+              </span>
+            </Field>
+          )}
+          <Field label="Monitoring">
+            {program.is_active ? "Active" : <Badge variant="secondary">Paused</Badge>}
+            <div className="text-xs text-muted-foreground">
+              IDL checked{" "}
+              {program.last_checked_at ? formatRelativeTime(program.last_checked_at) : "never"}
+              {chain && <> · chain checked {formatRelativeTime(chain.checked_at)}</>}
             </div>
+          </Field>
+          <Field label="Added">{formatRelativeTime(program.created_at)}</Field>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
 
-            {state.squads && (
-              <div>
-                <div className="mb-2 text-sm font-medium text-muted-foreground">
-                  Pending changes to this program
-                </div>
-                {open.length ? (
-                  <ul className="space-y-2">
-                    {open.map((proposal) => (
-                      <ProposalRow
-                        key={proposal.index}
-                        proposal={proposal}
-                        threshold={state.squads!.threshold}
-                        now={dataUpdatedAt}
-                      />
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No open multisig proposals touch this program.
-                  </p>
-                )}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Checked {formatRelativeTime(row!.checked_at)}. Verified-build status comes from{" "}
-              <a
-                href="https://verify.osec.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline"
-              >
-                OtterSec
-              </a>
-              ; it shows the source reproduces the code, not that the code is safe.
-            </p>
-          </div>
+/** Open Squads proposals that would change this program, most urgent first. */
+export function PendingProposals({ state, now }: { state: ChainState; now: number }) {
+  if (!state.squads) return null;
+  const rank = (p: TrackedProposal) => (p.status === "approved" ? 0 : 1);
+  const open = state.squads.proposals
+    .filter((p) => isOpenProposal(p.status))
+    .sort((a, b) => rank(a) - rank(b) || b.index - a.index);
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Users className="h-4 w-4" />
+          Multisig proposals
+          {open.length > 0 && <Badge variant="secondary">{open.length} open</Badge>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {open.length ? (
+          <ul className="space-y-2">
+            {open.map((proposal) => (
+              <ProposalRow
+                key={proposal.index}
+                proposal={proposal}
+                threshold={state.squads!.threshold}
+                now={now}
+              />
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No open proposals in the {state.squads.threshold}-of-{state.squads.members.length}{" "}
+            multisig touch this program.
+          </p>
         )}
       </CardContent>
     </Card>

@@ -12,45 +12,48 @@ import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  formatRelativeTime,
-  getExplorerUrl,
-  type SolanaExplorer,
-  severityBadgeColors,
-} from "@/lib/utils";
+import { formatRelativeTime, getExplorerUrl, type SolanaExplorer } from "@/lib/utils";
 import {
   ArrowLeft,
   Edit,
   Trash2,
   RefreshCw,
   ExternalLink,
-  Clock,
   Activity,
   AlertCircle,
   Eye,
   Download,
+  FileJson,
   X,
 } from "lucide-react";
 import {
   useProgram,
   useProgramSnapshots,
   useProgramChanges,
+  useProgramChain,
   useDeleteProgram,
 } from "@/hooks/use-programs";
 import { useUserSettings } from "@/hooks/use-user-settings";
 import { useAuth } from "@/lib/auth/auth-context";
 import { AddToWatchlistButton } from "@/components/watchlist/add-to-watchlist-button";
-import { ProgramSecurityCard } from "./program-security";
-import { changeCategory, changeTypeLabel, CATEGORY_LABELS } from "@/lib/changes/categories";
+import { PendingProposals, ProgramFacts } from "./program-security";
+import { RiskBadges, RiskBanner } from "./risk";
+import { ChangeGroupRows } from "@/components/changes/change-rows";
+import { summarizeChain } from "@/lib/chain/risk";
+import { groupChanges } from "@/lib/changes/grouping";
 
 const SnapshotJson = dynamic(() => import("./snapshot-json"), {
   loading: () => <p>Loading viewer…</p>,
 });
 
+// Rows fetched for the recent-changes card; one large IDL release can fill it alone.
+const CHANGE_ROWS = 100;
+
 interface Snapshot {
   id: string;
   program_id: string;
   idl_hash: string;
+  version_number: number;
   fetched_at: string;
 }
 
@@ -72,7 +75,15 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
     refetch: refetchProgram,
   } = useProgram(programId);
   const { data: snapshotsData, refetch: refetchSnapshots } = useProgramSnapshots(programId, 5);
-  const { data: changesData, refetch: refetchChanges } = useProgramChanges(programId);
+  const { data: changesData, refetch: refetchChanges } = useProgramChanges(programId, CHANGE_ROWS);
+  // The fetch time, not render time, decides "executable now"; it refreshes every minute.
+  const {
+    data: chainData,
+    isLoading: chainLoading,
+    isError: chainError,
+    dataUpdatedAt: chainUpdatedAt,
+    refetch: refetchChain,
+  } = useProgramChain(programId);
   const { data: settingsData } = useUserSettings({ enabled: true });
   const { isAdmin, userId } = useAuth();
   const deleteMutation = useDeleteProgram();
@@ -89,7 +100,7 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([refetchProgram(), refetchSnapshots(), refetchChanges()]);
+    await Promise.all([refetchProgram(), refetchSnapshots(), refetchChanges(), refetchChain()]);
     setRefreshing(false);
   };
 
@@ -132,37 +143,20 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
 
   if (programLoading) {
     return (
-      <div className="space-y-8">
-        <div className="flex items-center gap-4">
-          <Skeleton className="h-10 w-10" />
-          <div className="space-y-2">
-            <Skeleton className="h-8 w-64" />
-            <Skeleton className="h-4 w-96" />
-          </div>
+      <div className="space-y-6" aria-busy="true">
+        <Skeleton className="h-4 w-24" />
+        <div className="space-y-2">
+          <Skeleton className="h-9 w-64" />
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-5 w-96 max-w-full" />
         </div>
-
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-6 w-32" />
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-6 w-32" />
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-            </CardContent>
-          </Card>
+        <Skeleton className="h-20 w-full" />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            <Skeleton className="h-40 w-full" />
+            <Skeleton className="h-40 w-full" />
+          </div>
+          <Skeleton className="h-72 w-full" />
         </div>
       </div>
     );
@@ -194,242 +188,233 @@ export function ProgramDetail({ programId }: ProgramDetailProps) {
     return null;
   }
 
+  const chainState = chainData?.chain?.state ?? null;
+  const summary = chainData?.chain
+    ? summarizeChain(chainData.chain.state, chainData.chain.checked_at)
+    : null;
+  const groups = groupChanges(changes.map((change) => ({ ...change, program_id: program.id })));
+
   return (
-    <div className="space-y-8">
-      {snapshotError && <p role="alert">{snapshotError}</p>}
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/programs">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Programs
-          </Link>
-        </Button>
+    <div className="space-y-6">
+      {snapshotError && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{snapshotError}</AlertDescription>
+        </Alert>
+      )}
 
-        <div className="flex items-center gap-2">
+      <Link
+        href="/programs"
+        className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft className="mr-1 h-4 w-4" />
+        Programs
+      </Link>
+
+      {/* Header: name, status badges, address, actions */}
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{program.name}</h1>
+            {!program.is_active && <Badge variant="secondary">Paused</Badge>}
+          </div>
+          <RiskBadges summary={summary} now={chainUpdatedAt} />
+          {program.description && (
+            <p className="max-w-2xl text-sm text-muted-foreground">{program.description}</p>
+          )}
+          <div className="flex items-center gap-1">
+            <code className="break-all rounded bg-muted px-2 py-0.5 font-mono text-xs">
+              {program.program_id}
+            </code>
+            <CopyButton
+              variant="ghost"
+              size="sm"
+              value={program.program_id}
+              copyLabel="Copy program ID"
+              copiedLabel="Program ID copied"
+            />
+            <Button variant="ghost" size="sm" asChild>
+              <a
+                href={getExplorerUrl(program.program_id, preferredExplorer)}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open in explorer"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
           <AddToWatchlistButton programId={program.program_id} programDbId={program.id} size="sm" />
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing}>
-            <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh"
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
-
           {canManageProgram && (
             <>
               <Button variant="outline" size="sm" asChild>
-                <Link href={`/programs/${programId}/edit`}>
-                  <Edit className="mr-2 h-4 w-4" />
-                  Edit
+                <Link href={`/programs/${programId}/edit`} aria-label="Edit" title="Edit">
+                  <Edit className="h-4 w-4" />
                 </Link>
               </Button>
-
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleDelete}
                 className="text-red-600 hover:text-red-700"
+                aria-label="Delete"
+                title="Delete"
               >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
+                <Trash2 className="h-4 w-4" />
               </Button>
             </>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Program Info */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" />
-            Program Information
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Name</label>
-              <p className="mt-1 text-sm">{program.name}</p>
-            </div>
+      {/* The verdict first: what, if anything, is about to change this program */}
+      {chainLoading ? (
+        <Skeleton className="h-20 w-full" />
+      ) : chainError ? (
+        <p className="rounded-md border p-4 text-sm text-muted-foreground">
+          On-chain state is unavailable right now.
+        </p>
+      ) : (
+        <RiskBanner
+          summary={summary}
+          now={chainUpdatedAt}
+          footer={
+            summary && (
+              <>
+                Checked {formatRelativeTime(summary.checkedAt)}. Verified-build status comes from{" "}
+                <a
+                  href="https://verify.osec.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                >
+                  OtterSec
+                </a>
+                ; it shows the source reproduces the code, not that the code is safe.
+              </>
+            )
+          }
+        />
+      )}
 
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Status</label>
-              <div className="mt-1">
-                <Badge variant={program.is_active ? "default" : "secondary"}>
-                  {program.is_active ? "Active" : "Inactive"}
-                </Badge>
-              </div>
-            </div>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
+          {chainState && <PendingProposals state={chainState} now={chainUpdatedAt} />}
 
-            <div className="md:col-span-2">
-              <label className="text-sm font-medium text-muted-foreground">Description</label>
-              <p className="mt-1 text-sm">{program.description || "No description provided"}</p>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="text-sm font-medium text-muted-foreground">Program ID</label>
-              <div className="mt-1 flex items-center gap-1">
-                <code className="break-all rounded bg-muted px-2 py-1 text-sm">
-                  {program.program_id}
-                </code>
-                <CopyButton
-                  variant="ghost"
-                  size="sm"
-                  value={program.program_id}
-                  copyLabel="Copy program ID"
-                  copiedLabel="Program ID copied"
-                />
+          {/* Recent changes, one row per change, grouped by the event that produced them */}
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Activity className="h-4 w-4" />
+                Recent changes
+              </CardTitle>
+              {changes.length > 0 && (
                 <Button variant="ghost" size="sm" asChild>
-                  <a
-                    href={getExplorerUrl(program.program_id, preferredExplorer)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
+                  <Link href={`/changes?programId=${encodeURIComponent(program.program_id)}`}>
+                    View all
+                  </Link>
                 </Button>
-              </div>
-            </div>
+              )}
+            </CardHeader>
+            <CardContent>
+              {changes.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No changes detected yet.</p>
+              ) : (
+                <div className="space-y-4">
+                  {groups.slice(0, 5).map((group, i) => (
+                    <ChangeGroupRows
+                      key={group.key}
+                      group={group}
+                      showProgram={false}
+                      truncated={i === groups.length - 1 && changes.length >= CHANGE_ROWS}
+                    />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Created</label>
-              <p className="mt-1 text-sm">{formatRelativeTime(program.created_at)}</p>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Last Updated</label>
-              <p className="mt-1 text-sm">{formatRelativeTime(program.updated_at)}</p>
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Last Checked</label>
-              <p className="mt-1 text-sm">
-                {program.last_checked_at ? formatRelativeTime(program.last_checked_at) : "Never"}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <ProgramSecurityCard programId={program.id} explorer={preferredExplorer} />
-
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Recent Snapshots */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Recent Snapshots
-              <Badge variant="secondary">{snapshots.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {snapshots.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No snapshots found</p>
-            ) : (
-              <div className="space-y-3">
-                {snapshots.slice(0, 5).map((snapshot) => (
-                  <div
-                    key={snapshot.id}
-                    className="flex items-center justify-between rounded-md border p-3"
-                  >
-                    <div className="flex-1">
-                      <code className="rounded bg-muted px-2 py-1 text-xs">
+          {/* IDL versions */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileJson className="h-4 w-4" />
+                IDL versions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {snapshots.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No IDL found yet. Programs without a published Anchor or Program Metadata IDL are
+                  still watched for deploys and authority changes.
+                </p>
+              ) : (
+                <ul className="divide-y">
+                  {snapshots.slice(0, 5).map((snapshot, i) => (
+                    <li
+                      key={snapshot.id}
+                      className="flex items-center gap-3 py-2 first:pt-0 last:pb-0"
+                    >
+                      <span className="w-10 text-sm font-medium tabular-nums">
+                        v{snapshot.version_number}
+                      </span>
+                      <code className="hidden rounded bg-muted px-1.5 py-0.5 text-xs sm:inline">
                         {formatHash(snapshot.idl_hash)}
                       </code>
-                      <p className="mt-1 text-xs text-muted-foreground">
+                      {i === 0 && <Badge variant="outline">Latest</Badge>}
+                      <span className="flex-1 text-right text-xs text-muted-foreground">
                         {formatRelativeTime(snapshot.fetched_at)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setViewingSnapshot(snapshot)}
-                        title="View IDL"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => downloadSnapshot(snapshot)}
-                        title="Download JSON"
-                      >
-                        <Download className="h-4 w-4" />
-                      </Button>
-                      <CopyButton
-                        variant="ghost"
-                        size="sm"
-                        value={snapshot.idl_hash}
-                        copyLabel="Copy hash"
-                        copiedLabel="Hash copied"
-                      />
-                    </div>
-                  </div>
-                ))}
-
-                {snapshots.length > 5 && (
-                  <Button variant="outline" size="sm" className="w-full">
-                    View All Snapshots
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Changes */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Recent Changes
-              <Badge variant="secondary">{changes.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {changes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No changes detected</p>
-            ) : (
-              <div className="space-y-3">
-                {changes.slice(0, 5).map((change) => (
-                  <div key={change.id} className="space-y-2 rounded-md border p-3">
-                    <div className="flex items-center justify-between">
-                      <Badge
-                        className={
-                          severityBadgeColors[
-                            change.severity as keyof typeof severityBadgeColors
-                          ] || severityBadgeColors.low
-                        }
-                      >
-                        {change.severity}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {formatRelativeTime(change.detected_at)}
                       </span>
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        {changeTypeLabel(change.change_type)}
-                        <Badge variant="outline" className="text-[10px] font-normal">
-                          {CATEGORY_LABELS[changeCategory(change.change_type)]}
-                        </Badge>
+                      <div className="flex items-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setViewingSnapshot(snapshot)}
+                          aria-label={`View IDL v${snapshot.version_number}`}
+                          title="View IDL"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => downloadSnapshot(snapshot)}
+                          aria-label={`Download IDL v${snapshot.version_number}`}
+                          title="Download JSON"
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">{change.change_summary}</p>
-                    </div>
-                  </div>
-                ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-                {changes.length > 5 && (
-                  <Button variant="outline" size="sm" className="w-full" asChild>
-                    <Link href="/changes">View All Changes</Link>
-                  </Button>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <aside className="min-w-0 space-y-6">
+          <ProgramFacts
+            program={program}
+            chain={chainData?.chain}
+            chainLoading={chainLoading}
+            chainError={chainError}
+            explorer={preferredExplorer}
+          />
+        </aside>
       </div>
 
       {/* Snapshot Viewer Modal */}
