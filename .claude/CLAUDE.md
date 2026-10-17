@@ -187,7 +187,7 @@ are not a complete migration chain. Key tables:
 - **App Router** ([src/app/](../src/app/))
   - Server Components by default
   - API routes in `app/api/`
-  - Pages: programs, changes, settings, program detail
+  - Pages: programs, changes, change detail (`/changes/[id]`), settings, program detail
 
 - **Components** ([src/components/](../src/components/))
   - `ui/`: Shadcn-style Radix UI components
@@ -196,6 +196,10 @@ are not a complete migration chain. Key tables:
   - `dashboard/`: Stats cards
   - `watchlist/`: Watchlist management
   - `wallet/`: Wallet connection UI
+
+- **Risk and grouping (client-safe)**
+  - `lib/chain/risk.ts`: `summarizeChain` (compact `ChainSummary`, attached to `/api/programs` rows), `assessRisk` (one verdict plus findings), and `riskBadges`; pass the data's fetch time as `now`
+  - `lib/changes/grouping.ts`: groups changes by program and exact `detected_at` text, which one transition shares
 
 - **Client-Side State**
   - React Query for data fetching and caching
