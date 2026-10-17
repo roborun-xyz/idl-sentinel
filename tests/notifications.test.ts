@@ -172,3 +172,74 @@ test("Discord payloads use one embed with severity fields, escaped markdown, and
   assert.ok(!isDiscordWebhookUrl("https://hooks.slack.com/services/x"));
   assert.ok(!isDiscordWebhookUrl("https://discord.com/api/webhooks/123/abc?x=<script>"));
 });
+
+function fakeLock(freeAfterAttempts: number) {
+  let clock = 1_000_000;
+  const calls = { acquire: 0, release: 0, sends: 0 };
+  return {
+    calls,
+    start: clock,
+    deps: {
+      acquire: async () => ++calls.acquire > freeAfterAttempts,
+      release: async () => void calls.release++,
+      sleep: async (ms: number) => void (clock += ms),
+      now: () => clock,
+    },
+    send: async () => {
+      calls.sends++;
+      return { sent: 1, failed: 0, deferred: 0, errors: [] };
+    },
+  };
+}
+
+test("detection runs wait for a busy channel lock instead of skipping", async () => {
+  const { withChannelLock } = await import("../src/lib/cron/notifications");
+  const lock = fakeLock(2);
+  const result = await withChannelLock("notify-slack", lock.start + 25_000, lock.send, {
+    wait: true,
+    deps: lock.deps,
+  });
+  assert.equal(result.skipped, undefined);
+  assert.deepEqual(lock.calls, { acquire: 3, release: 1, sends: 1 });
+});
+
+test("a lock held until the deadline skips and leaves time to spare", async () => {
+  const { withChannelLock } = await import("../src/lib/cron/notifications");
+  const lock = fakeLock(Infinity);
+  const deadline = lock.start + 25_000;
+  const result = await withChannelLock("notify-slack", deadline, lock.send, {
+    wait: true,
+    deps: lock.deps,
+  });
+  assert.equal(result.skipped, true);
+  assert.equal(lock.calls.sends, 0);
+  assert.equal(lock.calls.release, 0, "a lock it never held is not released");
+  assert.ok(lock.deps.now() <= deadline - 5_000, "stops waiting before the send reserve");
+});
+
+test("scheduled runs still skip a busy lock at once", async () => {
+  const { withChannelLock } = await import("../src/lib/cron/notifications");
+  const lock = fakeLock(1);
+  const result = await withChannelLock("notify-slack", lock.start + 25_000, lock.send, {
+    deps: lock.deps,
+  });
+  assert.equal(result.skipped, true);
+  assert.deepEqual(lock.calls, { acquire: 1, release: 0, sends: 0 });
+});
+
+test("the channel lock is released when sending throws", async () => {
+  const { withChannelLock } = await import("../src/lib/cron/notifications");
+  const lock = fakeLock(0);
+  await assert.rejects(
+    withChannelLock(
+      "notify-slack",
+      lock.start + 25_000,
+      async () => {
+        throw new Error("boom");
+      },
+      { wait: true, deps: lock.deps }
+    ),
+    /boom/
+  );
+  assert.equal(lock.calls.release, 1);
+});
