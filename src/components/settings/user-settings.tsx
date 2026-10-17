@@ -17,6 +17,7 @@ import {
   useTelegramConnectionPoll,
 } from "@/hooks/use-user-settings";
 import { IntegrationSettings } from "./integration-settings";
+import { DestinationOverview } from "./destinations";
 
 export function UserSettings() {
   const { isAuthenticated, isLoading: authLoading, walletAddress } = useAuth();
@@ -258,84 +259,7 @@ export function UserSettings() {
 
   return (
     <div className="space-y-6">
-      <Card className="p-6">
-        <h2 className="mb-4 text-xl font-semibold">Account Information</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="text-sm font-medium text-muted-foreground">Wallet Address</label>
-            <div className="mt-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-sm">
-              {settings?.wallet_address || walletAddress}
-            </div>
-          </div>
-          {settings?.is_admin && (
-            <div>
-              <label className="text-sm font-medium text-muted-foreground">Role</label>
-              <div className="mt-1">
-                <span className="inline-flex items-center rounded-sm bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
-                  Administrator
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      <Card className="p-6">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Explorer Preference</h2>
-          {savingExplorer && (
-            <span className="flex items-center text-sm text-muted-foreground">
-              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-              Saving...
-            </span>
-          )}
-          {explorerSaveSuccess && !savingExplorer && (
-            <span className="flex items-center text-sm text-green-600">
-              <Check className="mr-1 h-3 w-3" />
-              Saved
-            </span>
-          )}
-        </div>
-        <p className="mb-4 text-sm text-muted-foreground">
-          Choose your preferred Solana explorer for viewing program addresses
-        </p>
-        <div className="space-y-3">
-          <label className="flex cursor-pointer items-center space-x-3">
-            <input
-              type="radio"
-              name="explorer"
-              value="explorer.solana.com"
-              checked={preferredExplorer === "explorer.solana.com"}
-              onChange={(e) =>
-                saveExplorerPreference(e.target.value as "explorer.solana.com" | "solscan.io")
-              }
-              disabled={savingExplorer}
-              className="h-4 w-4 border-gray-300 text-primary focus:ring-2 focus:ring-primary disabled:opacity-50"
-            />
-            <div className="flex-1">
-              <div className="text-sm font-medium">Solana Explorer</div>
-              <div className="text-xs text-muted-foreground">explorer.solana.com</div>
-            </div>
-          </label>
-          <label className="flex cursor-pointer items-center space-x-3">
-            <input
-              type="radio"
-              name="explorer"
-              value="solscan.io"
-              checked={preferredExplorer === "solscan.io"}
-              onChange={(e) =>
-                saveExplorerPreference(e.target.value as "explorer.solana.com" | "solscan.io")
-              }
-              disabled={savingExplorer}
-              className="h-4 w-4 border-gray-300 text-primary focus:ring-2 focus:ring-primary disabled:opacity-50"
-            />
-            <div className="flex-1">
-              <div className="text-sm font-medium">Solscan</div>
-              <div className="text-xs text-muted-foreground">solscan.io</div>
-            </div>
-          </label>
-        </div>
-      </Card>
+      <DestinationOverview settings={settings} />
 
       <Card className="p-6">
         <h2 className="mb-2 text-xl font-semibold">Notification Settings</h2>
@@ -462,7 +386,7 @@ export function UserSettings() {
             )}
           </div>
 
-          <div>
+          <div id="telegram">
             <label className="mb-2 block text-sm font-medium">Telegram Notifications</label>
             <p className="mb-4 text-xs text-muted-foreground">
               Receive notifications via Telegram when programs in your watchlist change.
@@ -604,6 +528,85 @@ export function UserSettings() {
       </Card>
 
       <IntegrationSettings />
+
+      <Card className="p-6">
+        <h2 className="mb-4 text-xl font-semibold">Account Information</h2>
+        <div className="space-y-3">
+          <div>
+            <label className="text-sm font-medium text-muted-foreground">Wallet Address</label>
+            <div className="mt-1 break-all rounded-md bg-muted px-3 py-2 font-mono text-sm">
+              {settings?.wallet_address || walletAddress}
+            </div>
+          </div>
+          {settings?.is_admin && (
+            <div>
+              <label className="text-sm font-medium text-muted-foreground">Role</label>
+              <div className="mt-1">
+                <span className="inline-flex items-center rounded-sm bg-purple-100 px-2.5 py-0.5 text-xs font-medium text-purple-800">
+                  Administrator
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Explorer Preference</h2>
+          {savingExplorer && (
+            <span className="flex items-center text-sm text-muted-foreground">
+              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              Saving...
+            </span>
+          )}
+          {explorerSaveSuccess && !savingExplorer && (
+            <span className="flex items-center text-sm text-green-600">
+              <Check className="mr-1 h-3 w-3" />
+              Saved
+            </span>
+          )}
+        </div>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Choose your preferred Solana explorer for viewing program addresses
+        </p>
+        <div className="space-y-3">
+          <label className="flex cursor-pointer items-center space-x-3">
+            <input
+              type="radio"
+              name="explorer"
+              value="explorer.solana.com"
+              checked={preferredExplorer === "explorer.solana.com"}
+              onChange={(e) =>
+                saveExplorerPreference(e.target.value as "explorer.solana.com" | "solscan.io")
+              }
+              disabled={savingExplorer}
+              className="h-4 w-4 border-gray-300 text-primary focus:ring-2 focus:ring-primary disabled:opacity-50"
+            />
+            <div className="flex-1">
+              <div className="text-sm font-medium">Solana Explorer</div>
+              <div className="text-xs text-muted-foreground">explorer.solana.com</div>
+            </div>
+          </label>
+          <label className="flex cursor-pointer items-center space-x-3">
+            <input
+              type="radio"
+              name="explorer"
+              value="solscan.io"
+              checked={preferredExplorer === "solscan.io"}
+              onChange={(e) =>
+                saveExplorerPreference(e.target.value as "explorer.solana.com" | "solscan.io")
+              }
+              disabled={savingExplorer}
+              className="h-4 w-4 border-gray-300 text-primary focus:ring-2 focus:ring-primary disabled:opacity-50"
+            />
+            <div className="flex-1">
+              <div className="text-sm font-medium">Solscan</div>
+              <div className="text-xs text-muted-foreground">solscan.io</div>
+            </div>
+          </label>
+        </div>
+      </Card>
     </div>
   );
 }

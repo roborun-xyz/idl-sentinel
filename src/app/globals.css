@@ -144,3 +144,8 @@
   font-family: inherit !important;
   letter-spacing: normal !important;
 }
+
+/* In-page links (settings destinations) land below the sticky header. */
+:target {
+  scroll-margin-top: 6rem;
+}
