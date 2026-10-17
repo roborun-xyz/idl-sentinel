@@ -105,3 +105,54 @@ export async function getChangeStatistics(programId?: string) {
     byType: result?.type_counts || {},
   };
 }
+
+export interface ChangeRecord {
+  id: string;
+  program_id: string;
+  change_type: ChangeType;
+  change_summary: string;
+  severity: ChangeSeverity;
+  detected_at: string;
+  change_details: ChangeDetails | null;
+  monitored_programs: { id: string; name: string; program_id: string };
+}
+
+/** One change with its program, for the change's own page. */
+export async function getChangeRecord(id: string): Promise<ChangeRecord | null> {
+  const { data, error } = await supabaseAdmin
+    .from("idl_changes")
+    .select(
+      "id, program_id, change_type, change_summary, severity, detected_at, change_details, monitored_programs!inner(id, name, program_id)"
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as unknown as ChangeRecord | null;
+}
+
+/**
+ * Other changes recorded in the same transition (same program, same timestamp),
+ * most severe first. Read one severity at a time so a cap never drops a
+ * critical change in favour of low ones.
+ */
+export async function getEventSiblings(
+  change: ChangeRecord,
+  limit = 200
+): Promise<Array<Omit<ChangeRecord, "change_details" | "monitored_programs">>> {
+  const rows: Array<Omit<ChangeRecord, "change_details" | "monitored_programs">> = [];
+  for (const severity of ["critical", "high", "medium", "low"] as const) {
+    if (rows.length >= limit) break;
+    const { data, error } = await supabaseAdmin
+      .from("idl_changes")
+      .select("id, program_id, change_type, change_summary, severity, detected_at")
+      .eq("program_id", change.program_id)
+      .eq("detected_at", change.detected_at)
+      .eq("severity", severity)
+      .neq("id", change.id)
+      .order("id", { ascending: false })
+      .limit(limit - rows.length);
+    if (error) throw new Error(error.message);
+    rows.push(...(data || []));
+  }
+  return rows;
+}

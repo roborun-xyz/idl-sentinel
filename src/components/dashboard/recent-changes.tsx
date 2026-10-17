@@ -1,23 +1,22 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  formatRelativeTime,
-  severityDotColors,
-  severityBadgeColors,
-  truncateString,
-} from "@/lib/utils";
 import { ExternalLink, Clock, AlertCircle } from "lucide-react";
 import { useRecentChanges } from "@/hooks/use-changes";
-import { changeTypeLabel } from "@/lib/changes/categories";
+import { groupChanges } from "@/lib/changes/grouping";
+import { ChangeGroupRows } from "@/components/changes/change-rows";
 
 const LIMIT = 8;
+// Enough rows that the newest few events are complete after grouping.
+const FETCH = 100;
+const GROUPS = 5;
 
 export function RecentChanges() {
-  const { data, isLoading } = useRecentChanges(LIMIT);
-  const changes = data?.changes || [];
+  const { data, isLoading } = useRecentChanges(FETCH);
+  const changes = useMemo(() => data?.changes || [], [data?.changes]);
+  const groups = useMemo(() => groupChanges(changes), [changes]);
 
   if (isLoading) {
     return (
@@ -72,44 +71,14 @@ export function RecentChanges() {
             </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {changes.slice(0, LIMIT).map((change) => (
-              <Link
-                key={change.id}
-                href="/changes"
-                className="block flex cursor-pointer items-start gap-2 rounded-md border p-3 transition-colors hover:bg-muted/50 sm:gap-3"
-              >
-                <div
-                  className={`mt-2 h-2 w-2 flex-shrink-0 rounded-sm ${
-                    severityDotColors[change.severity] || "bg-gray-500"
-                  }`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-medium">
-                        {change.monitored_programs?.name || "Unknown Program"}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        {changeTypeLabel(change.change_type)}
-                      </Badge>
-                      <Badge
-                        className={`text-xs ${
-                          severityBadgeColors[change.severity] || "bg-gray-500 text-white"
-                        }`}
-                      >
-                        {change.severity}
-                      </Badge>
-                    </div>
-                    <span className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatRelativeTime(change.detected_at)}
-                    </span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {truncateString(change.change_summary, 100)}
-                  </p>
-                </div>
-              </Link>
+          <div className="space-y-4">
+            {groups.slice(0, GROUPS).map((group, i) => (
+              <ChangeGroupRows
+                key={group.key}
+                group={group}
+                showProgram
+                truncated={i === groups.length - 1 && changes.length >= FETCH}
+              />
             ))}
             <div className="pt-4 text-center">
               <Link href="/changes" className="block sm:inline-block">

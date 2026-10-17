@@ -3,22 +3,16 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  formatRelativeTime,
-  severityDotColors,
-  severityBadgeColors,
-  truncateString,
-} from "@/lib/utils";
-import { Search, Filter, ChevronDown, ChevronUp } from "lucide-react";
-import dynamic from "next/dynamic";
-const LazyChangeDetails = dynamic(() => import("./lazy-change-details"), {
-  loading: () => <p>Loading details…</p>,
-});
+import { Search, Filter } from "lucide-react";
 import { useChanges } from "@/hooks/use-changes";
-import { changeTypeLabel } from "@/lib/changes/categories";
+import { groupChanges } from "@/lib/changes/grouping";
+import { ChangeGroupRows } from "./change-rows";
+
+const PAGE_SIZE = 100;
+const MIN_EVENTS = 5;
+const MAX_AUTO_PAGES = 5;
 
 interface ChangesListProps {
   programId?: string;
@@ -29,10 +23,9 @@ export function ChangesList({ programId }: ChangesListProps) {
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [programFilter, setProgramFilter] = useState<string>("all");
-  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, hasNextPage, fetchNextPage, isFetchingNextPage, isFetching } =
-    useChanges(50, programId, {
+    useChanges(PAGE_SIZE, programId, {
       search: debouncedSearchTerm,
       severity: severityFilter,
       programName: programFilter,
@@ -47,16 +40,22 @@ export function ChangesList({ programId }: ChangesListProps) {
   }, [searchTerm]);
 
   const filteredChanges = changes;
+  const groups = useMemo(() => groupChanges(changes), [changes]);
+  const pages = data?.pages.length ?? 0;
 
-  const toggleExpanded = (changeId: string) => {
-    const newExpanded = new Set(expandedChanges);
-    if (newExpanded.has(changeId)) {
-      newExpanded.delete(changeId);
-    } else {
-      newExpanded.add(changeId);
+  // One large IDL release can fill a whole page; keep loading until the feed
+  // shows a few distinct events, within a bounded number of pages.
+  useEffect(() => {
+    if (
+      groups.length < MIN_EVENTS &&
+      hasNextPage &&
+      !isFetching &&
+      pages > 0 &&
+      pages < MAX_AUTO_PAGES
+    ) {
+      void fetchNextPage();
     }
-    setExpandedChanges(newExpanded);
-  };
+  }, [groups.length, hasNextPage, isFetching, pages, fetchNextPage]);
 
   const severityOptions = [
     { value: "all", label: "All Severities" },
@@ -155,7 +154,8 @@ export function ChangesList({ programId }: ChangesListProps) {
         </div>
 
         <div className="text-sm text-muted-foreground">
-          {filteredChanges.length} of {changes.length} changes
+          {changes.length} changes in {groups.length} {groups.length === 1 ? "event" : "events"}
+          {hasNextPage && " loaded"}
         </div>
 
         {programId && (
@@ -192,78 +192,18 @@ export function ChangesList({ programId }: ChangesListProps) {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {filteredChanges.map((change) => {
-            const isExpanded = expandedChanges.has(change.id);
-            const programAddress = change.monitored_programs?.program_id || change.program_id;
-
-            return (
-              <Card key={change.id}>
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex items-start gap-3 sm:gap-4">
-                    <div
-                      className={`mt-1 h-4 w-4 flex-shrink-0 rounded-sm ${
-                        severityDotColors[change.severity] || "bg-gray-500"
-                      }`}
-                    />
-
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-semibold">
-                            {change.monitored_programs?.name || "Unknown Program"}
-                          </h3>
-                          <Badge variant="outline" className="text-xs">
-                            {changeTypeLabel(change.change_type)}
-                          </Badge>
-                          <Badge
-                            className={`text-xs ${
-                              severityBadgeColors[change.severity] || "bg-gray-500 text-white"
-                            }`}
-                          >
-                            {change.severity}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="whitespace-nowrap text-sm text-muted-foreground">
-                            {formatRelativeTime(change.detected_at)}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`${isExpanded ? "Collapse" : "Expand"} change details`}
-                            aria-expanded={isExpanded}
-                            onClick={() => toggleExpanded(change.id)}
-                            className="h-6 w-6 p-0"
-                          >
-                            {isExpanded ? (
-                              <ChevronUp className="h-4 w-4" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-
-                      <p className="mb-2 text-sm text-muted-foreground">{change.change_summary}</p>
-
-                      <p className="break-all font-mono text-xs text-muted-foreground">
-                        {truncateString(programAddress, 40)}
-                      </p>
-
-                      {isExpanded && (
-                        <div className="mt-4 overflow-auto rounded-md bg-muted/50 p-3 sm:p-4">
-                          <h4 className="mb-3 text-sm font-medium">Change Details</h4>
-                          <LazyChangeDetails id={change.id} />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        <Card>
+          <CardContent className="space-y-5 p-3 sm:p-4">
+            {groups.map((group, i) => (
+              <ChangeGroupRows
+                key={group.key}
+                group={group}
+                showProgram={!programId}
+                truncated={i === groups.length - 1 && !!hasNextPage}
+              />
+            ))}
+          </CardContent>
+        </Card>
       )}
       {hasNextPage && (
         <Button
