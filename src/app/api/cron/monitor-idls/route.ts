@@ -49,7 +49,10 @@ export async function GET(request: NextRequest) {
     // Run the monitoring process
     const result = await monitorPrograms();
 
-    const notifications = await runNotificationJobs();
+    // New changes wait for a busy channel lock; otherwise this only drains leftovers.
+    const notifications = await runNotificationJobs(undefined, {
+      waitForLock: result.changesDetected > 0,
+    });
 
     // Clean up expired Telegram connection tokens
     await cleanupExpiredTokens();

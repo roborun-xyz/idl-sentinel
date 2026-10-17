@@ -78,6 +78,7 @@ UPDATE users SET is_admin = true WHERE wallet_address = 'YOUR_WALLET';
    - Orchestrates: monitoring → change detection → notifications
    - Uses a database lease to avoid overlapping monitoring runs
    - `/api/cron/notifications` independently drains deliveries every five minutes
+   - Detection runs deliver new changes at once; a busy per-channel lock (which prevents duplicate sends) is retried until shortly before the deadline instead of skipped
    - `/api/cron/watch-programs` runs the program watch every five minutes (below)
 
 2. **IDL Fetching** ([lib/solana/idl-fetcher.ts](../src/lib/solana/idl-fetcher.ts))

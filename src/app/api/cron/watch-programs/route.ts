@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     const notifyDeadline = Math.min(Date.now() + 25_000, startedAt + 110_000);
     const notifications =
       result.changesDetected && notifyDeadline - Date.now() > 5_000
-        ? await runNotificationJobs(notifyDeadline)
+        ? await runNotificationJobs(notifyDeadline, { waitForLock: true })
         : null;
     const errors = [
       ...result.errors.map((e) => `watch:${e.programId}:${e.error}`),
