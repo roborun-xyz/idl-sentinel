@@ -6,14 +6,44 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatRelativeTime } from "@/lib/utils";
-import { Plus, Search, Eye, Edit, Trash2 } from "lucide-react";
+import { formatRelativeTime, truncateString } from "@/lib/utils";
+import { Plus, Search, Edit, Trash2 } from "lucide-react";
 import { useAuth } from "@/lib/auth/auth-context";
 import { AddToWatchlistButton } from "@/components/watchlist/add-to-watchlist-button";
 import { usePrograms, useDeleteProgram } from "@/hooks/use-programs";
 import { cn } from "@/lib/utils";
+import { RiskBadges } from "./risk";
+import { codeControl, needsAttention, type ChainSummary } from "@/lib/chain/risk";
+
+const PAGE_SIZE = 50;
+
+const FILTERS = {
+  all: { label: "All", match: () => true },
+  attention: {
+    label: "Needs attention",
+    match: (c: ChainSummary | null, now: number) => needsAttention(c, now),
+  },
+  upgradeable: {
+    label: "Upgradeable",
+    match: (c: ChainSummary | null) => !!c && ["multisig", "upgradeable"].includes(codeControl(c)),
+  },
+  immutable: {
+    label: "Immutable",
+    match: (c: ChainSummary | null) => !!c && codeControl(c) === "immutable",
+  },
+  verified: {
+    label: "Verified",
+    match: (c: ChainSummary | null) => c?.verification === "verified",
+  },
+} satisfies Record<
+  string,
+  { label: string; match: (c: ChainSummary | null, now: number) => boolean }
+>;
+type FilterKey = keyof typeof FILTERS;
 
 export function ProgramsList() {
+  // Fallback clock for placeholder rows, which report a fetch time of 0.
+  const [mountedAt] = useState(() => Date.now());
   const { isAdmin, userId } = useAuth();
 
   const deleteMutation = useDeleteProgram();
@@ -22,12 +52,21 @@ export function ProgramsList() {
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
   const [offset, setOffset] = useState(0);
-  const { data, isLoading, isError, isFetching } = usePrograms({
-    limit: 25,
+  const [filter, setFilter] = useState<FilterKey>("all");
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    dataUpdatedAt: fetchedAt,
+  } = usePrograms({
+    limit: PAGE_SIZE,
     offset,
     search: debouncedSearchTerm,
   });
   const programs = useMemo(() => data?.programs || [], [data?.programs]);
+  // Placeholder rows shown during a refetch report 0; never judge timelocks against 1970.
+  const dataUpdatedAt = fetchedAt || mountedAt;
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -38,7 +77,12 @@ export function ProgramsList() {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  const filteredPrograms = programs;
+  // Filters apply to what is loaded, so they only show when one page holds every match.
+  const canFilter = offset === 0 && !data?.pagination.hasMore && programs.length > 1;
+  const activeFilter = canFilter ? filter : "all";
+  const filteredPrograms = programs.filter((p) =>
+    FILTERS[activeFilter].match(p.chain, dataUpdatedAt)
+  );
 
   const handleDelete = async (programId: string) => {
     if (!confirm("Are you sure you want to delete this program? This action cannot be undone.")) {
@@ -107,7 +151,38 @@ export function ProgramsList() {
         </Link>
       </div>
 
-      {filteredPrograms.length === 0 ? (
+      {canFilter && (
+        <div role="group" aria-label="Filter programs" className="flex flex-wrap gap-2">
+          {(Object.keys(FILTERS) as FilterKey[]).map((key) => {
+            const count = programs.filter((p) => FILTERS[key].match(p.chain, dataUpdatedAt)).length;
+            if (key !== "all" && count === 0 && filter !== key) return null;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={activeFilter === key}
+                onClick={() => setFilter(key)}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  activeFilter === key
+                    ? "border-foreground bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {FILTERS[key].label} <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {filteredPrograms.length === 0 && activeFilter !== "all" ? (
+        <Card>
+          <CardContent className="p-12 text-center text-muted-foreground">
+            No programs match this filter.
+          </CardContent>
+        </Card>
+      ) : filteredPrograms.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
             {!debouncedSearchTerm && offset === 0 ? (
@@ -132,116 +207,102 @@ export function ProgramsList() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
-          {filteredPrograms.map((program) => {
-            const isProgramOwner = !!userId && program.owner_id === userId;
-            const canManageProgram = isAdmin || isProgramOwner;
+        <Card>
+          <ul className="divide-y">
+            {filteredPrograms.map((program) => {
+              const isProgramOwner = !!userId && program.owner_id === userId;
+              const canManageProgram = isAdmin || isProgramOwner;
 
-            return (
-              <Card
-                key={program.id}
-                className={cn(!program.is_active && "border-dashed bg-muted/30 opacity-75")}
-              >
-                <CardContent className="p-4 sm:p-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h3
-                          className={cn(
-                            "text-lg font-semibold",
-                            !program.is_active && "text-muted-foreground"
-                          )}
-                        >
-                          {program.name}
-                        </h3>
-                        <Badge variant={program.is_active ? "default" : "secondary"}>
-                          {program.is_active ? "Active" : "Hidden"}
-                        </Badge>
-                      </div>
-
-                      {program.description && (
-                        <p
-                          className={cn(
-                            "mb-3 text-muted-foreground",
-                            !program.is_active && "line-through decoration-muted-foreground/40"
-                          )}
-                        >
-                          {program.description}
-                        </p>
-                      )}
-
-                      <div className="space-y-1">
-                        <div className="flex flex-col text-sm sm:flex-row sm:items-center sm:space-x-2">
-                          <span className="text-muted-foreground">Program ID:</span>
-                          <code className="break-all rounded bg-muted px-2 py-1 font-mono text-xs">
-                            {program.program_id}
-                          </code>
-                        </div>
-                        <div className="flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:gap-0 sm:space-x-4">
-                          <span>Added {formatRelativeTime(program.created_at)}</span>
-                          <span>Updated {formatRelativeTime(program.updated_at)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 sm:ml-4">
-                      {program.is_active && (
-                        <AddToWatchlistButton
-                          programId={program.program_id}
-                          programDbId={program.id}
-                          size="sm"
-                          variant="outline"
-                        />
-                      )}
-                      <Link href={`/programs/${program.id}`}>
-                        <Button variant="outline" size="sm" className="flex items-center space-x-1">
-                          <Eye className="h-3 w-3" />
-                          <span className="hidden sm:inline">View</span>
-                        </Button>
+              return (
+                <li
+                  key={program.id}
+                  className={cn(
+                    "flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between",
+                    !program.is_active && "bg-muted/30"
+                  )}
+                >
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/programs/${program.id}`}
+                        className={cn(
+                          "font-semibold hover:underline",
+                          !program.is_active && "text-muted-foreground"
+                        )}
+                      >
+                        {program.name}
                       </Link>
-                      {canManageProgram && (
-                        <>
-                          <Link href={`/programs/${program.id}/edit`}>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex items-center space-x-1"
-                            >
-                              <Edit className="h-3 w-3" />
-                              <span className="hidden sm:inline">Edit</span>
-                            </Button>
-                          </Link>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDelete(program.id)}
-                            className="flex items-center space-x-1 text-destructive hover:text-destructive"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            <span className="hidden sm:inline">Delete</span>
-                          </Button>
-                        </>
-                      )}
+                      {!program.is_active && <Badge variant="secondary">Hidden</Badge>}
+                      <RiskBadges summary={program.chain} now={dataUpdatedAt} />
+                    </div>
+                    {program.description && (
+                      <p className="truncate text-sm text-muted-foreground">
+                        {program.description}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <code className="font-mono" title={program.program_id}>
+                        {truncateString(program.program_id, 20)}
+                      </code>
+                      <span>
+                        {program.last_checked_at
+                          ? `Checked ${formatRelativeTime(program.last_checked_at)}`
+                          : "Not checked yet"}
+                      </span>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+
+                  <div className="flex flex-wrap items-center gap-2 sm:ml-4">
+                    {program.is_active && (
+                      <AddToWatchlistButton
+                        programId={program.program_id}
+                        programDbId={program.id}
+                        size="sm"
+                        variant="outline"
+                      />
+                    )}
+                    {canManageProgram && (
+                      <>
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link
+                            href={`/programs/${program.id}/edit`}
+                            aria-label={`Edit ${program.name}`}
+                            title="Edit"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(program.id)}
+                          className="text-destructive hover:text-destructive"
+                          aria-label={`Delete ${program.name}`}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
       )}
       <div className="flex justify-between">
         <Button
           variant="outline"
           disabled={offset === 0 || isFetching}
-          onClick={() => setOffset(Math.max(0, offset - 25))}
+          onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
         >
           Previous
         </Button>
         <Button
           variant="outline"
           disabled={!data?.pagination.hasMore || isFetching}
-          onClick={() => setOffset(offset + 25)}
+          onClick={() => setOffset(offset + PAGE_SIZE)}
         >
           Next
         </Button>

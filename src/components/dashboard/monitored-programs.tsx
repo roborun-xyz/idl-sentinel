@@ -1,15 +1,20 @@
 "use client";
 
+import { useState } from "react";
+
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { RiskBadges } from "@/components/programs/risk";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime, truncateString } from "@/lib/utils";
-import { ExternalLink, Plus, Code, Activity, AlertCircle } from "lucide-react";
+import { ExternalLink, Plus, Code, AlertCircle } from "lucide-react";
 import { usePrograms } from "@/hooks/use-programs";
 
 export function MonitoredPrograms() {
-  const { data, isLoading } = usePrograms({ limit: 5, publicOnly: true });
+  // Fallback clock for placeholder rows, which report a fetch time of 0.
+  const [mountedAt] = useState(() => Date.now());
+  const { data, isLoading, dataUpdatedAt: fetchedAt } = usePrograms({ limit: 5, publicOnly: true });
+  const dataUpdatedAt = fetchedAt || mountedAt;
   const programs = data?.programs || [];
 
   if (isLoading) {
@@ -92,13 +97,8 @@ export function MonitoredPrograms() {
               >
                 <div className="min-w-0 flex-1">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Activity
-                      className={`h-4 w-4 ${program.is_active ? "text-green-600" : "text-muted-foreground"}`}
-                    />
                     <span className="font-medium">{program.name}</span>
-                    <Badge variant={program.is_active ? "default" : "secondary"}>
-                      {program.is_active ? "Active" : "Inactive"}
-                    </Badge>
+                    <RiskBadges summary={program.chain} now={dataUpdatedAt} />
                   </div>
                   {program.description && (
                     <p className="mb-2 text-sm text-muted-foreground">
